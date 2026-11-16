@@ -1,12 +1,15 @@
 """
 Smoke test untuk memastikan rute FastAPI, database, dan logika platform berjalan dengan baik
 """
-from app.database import SessionLocal
+from app.database import init_db, SessionLocal, get_db
 from app.models import Channel, ArticleSource
 from app.schemas import ChannelCreate, IngestRequest
 from app.api.routes_channels import create_or_update_channel, get_channel, list_channels, delete_channel
 from app.api.routes_ingest import ingest_source
 from app.main import root, health_check
+
+# Inisialisasi DB untuk testing lokal
+init_db()
 
 def test_root_and_health():
     r = root()
@@ -35,19 +38,15 @@ def test_channel_flow():
             default_labels="AI,Tech"
         )
         
-        # Create
         created = create_or_update_channel(data, db=db)
         assert created.id == "blogger-tech-smoke"
         
-        # Read
         fetched = get_channel("blogger-tech-smoke", db=db)
         assert fetched.niche == "Teknologi & AI"
         
-        # List
         all_ch = list_channels(db=db)
         assert any(c.id == "blogger-tech-smoke" for c in all_ch)
         
-        # Delete
         delete_channel("blogger-tech-smoke", db=db)
         print("✅ Channel CRUD flow passed!")
     finally:

@@ -1,10 +1,9 @@
 import sys
 import os
 
-# Menambahkan root project ke sys.path agar modul 'app' dapat ditemukan oleh Vercel
-current_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.dirname(current_dir)
-if root_dir not in sys.path:
-    sys.path.insert(0, root_dir)
+# Pastikan root project masuk ke sys.path agar modul 'app' bisa diimpor di Vercel
+root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if root not in sys.path:
+    sys.path.insert(0, root)
 
-from app.main import app
+from app.main import app  # noqa: E402, F401

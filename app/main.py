@@ -1,18 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.database import engine, Base
-from app.api import routes_channels, routes_ingest, routes_publish
-
-# Inisialisasi tabel database dengan penanganan error aman (agar serverless tidak crash saat cold-start)
-db_init_status = "connected"
-db_init_error = None
-
-try:
-    Base.metadata.create_all(bind=engine)
-except Exception as e:
-    db_init_status = "error"
-    db_init_error = str(e)
-    print(f"⚠️ Warning Database Connection Failed: {e}")
+from app.database import init_db, get_engine, SessionLocal
 
 app = FastAPI(
     title="Blog Konektor - Multi-Channel AI Content Engine",
@@ -20,7 +8,6 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS middleware agar bisa diakses dari dashboard web lokal mana saja
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,29 +16,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Registrasi Router
+# Inisialisasi DB saat startup — aman untuk serverless cold-start
+_db_ready = False
+
+@app.on_event("startup")
+def startup_event():
+    global _db_ready
+    try:
+        engine = init_db()
+        # Ikat SessionLocal ke engine yang sudah siap
+        SessionLocal.configure(bind=engine)
+        _db_ready = True
+        print("✅ Database initialized successfully.")
+    except Exception as e:
+        print(f"⚠️ Database init warning (non-fatal): {e}")
+
+from app.api import routes_channels, routes_ingest, routes_publish  # noqa: E402
+
 app.include_router(routes_channels.router)
 app.include_router(routes_ingest.router)
 app.include_router(routes_publish.router)
 
 @app.get("/")
-@app.get("/api/index.py")
 def root():
     return {
         "system": "Blog Konektor",
         "status": "online",
         "version": "1.0.0",
         "docs_url": "/docs",
-        "database": {
-            "status": db_init_status,
-            "error": db_init_error
-        },
+        "database_ready": _db_ready,
         "supported_platforms": ["blogger", "wordpress (next)"]
     }
 
 @app.get("/health")
 def health_check():
-    return {
-        "status": "healthy",
-        "database": db_init_status
-    }
+    return {"status": "healthy", "database_ready": _db_ready}
