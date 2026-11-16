@@ -71,12 +71,47 @@ def _ensure_channel_blog_columns(engine):
         for name, ddl in missing:
             conn.execute(text(f"ALTER TABLE channels ADD COLUMN {name} {ddl}"))
 
+def _ensure_feed_sources_table(engine):
+    """Tambah kolom yang kurang ke tabel feed_sources yang sudah ada.
+
+    Mengikuti pola _ensure_channel_blog_columns: create_all() tidak mengubah
+    tabel lama, jadi tanpa ini kolom baru tidak akan pernah muncul di
+    database production. Tabelnya sendiri dibuat oleh create_all() di
+    init_db() bila belum ada.
+    """
+    from sqlalchemy import inspect, text
+    try:
+        tables = inspect(engine).get_table_names()
+    except Exception:
+        return
+    if "feed_sources" not in tables:
+        return  # create_all() sudah membuatnya
+    try:
+        cols = {c["name"] for c in inspect(engine).get_columns("feed_sources")}
+    except Exception:
+        return
+    expected = {
+        "channel_id": "VARCHAR(50)",
+        "feed_url": "VARCHAR(500)",
+        "title": "VARCHAR(300)",
+        "active": "BOOLEAN",
+        "last_checked_at": "TIMESTAMP",
+        "created_at": "TIMESTAMP",
+    }
+    missing = [(name, ddl) for name, ddl in expected.items() if name not in cols]
+    if not missing:
+        return
+    with engine.begin() as conn:
+        for name, ddl in missing:
+            conn.execute(text(f"ALTER TABLE feed_sources ADD COLUMN {name} {ddl}"))
+
 def init_db():
     """Panggil eksplisit untuk membuat tabel dan mengikat SessionLocal ke engine."""
     engine = get_engine()
     SessionLocal.configure(bind=engine)
     Base.metadata.create_all(bind=engine)
     _ensure_channel_blog_columns(engine)
+    _ensure_feed_sources_table(engine)
     return engine
 
 # Untuk keperluan lokal/testing — jalankan langsung tanpa server

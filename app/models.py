@@ -78,6 +78,25 @@ class ArticleSource(Base):
     publications = relationship("Publication", back_populates="source")
 
 
+class FeedSource(Base):
+    """
+    Menyimpan sumber RSS/Atom yang dipantau per channel.
+    Fetch dilakukan on-demand (tanpa cron/background scheduler) karena
+    deploy di Vercel serverless tidak punya cron persisten.
+    """
+    __tablename__ = "feed_sources"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    channel_id = Column(String(50), ForeignKey("channels.id"), nullable=False)
+    feed_url = Column(String(500), nullable=False)
+    title = Column(String(300), nullable=True)
+    active = Column(Boolean, default=True)
+    last_checked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    channel = relationship("Channel")
+
+
 class Publication(Base):
     """
     Menyimpan catatan hasil posting/draf ke masing-masing channel/blog
@@ -98,6 +117,10 @@ class Publication(Base):
     remote_post_id = Column(String(100), nullable=True)
     remote_url = Column(String(500), nullable=True)
     error_message = Column(Text, nullable=True)
+    # Waktu terbit yang dijadwalkan (hanya untuk status 'scheduled').
+    # Disimpan sebagai waktu lokal WIB tanpa tzinfo, sama seperti yang
+    # dipilih di dashboard (datetime-local) — jadi tampilannya cocok.
+    scheduled_at = Column(DateTime, nullable=True)
 
     published_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

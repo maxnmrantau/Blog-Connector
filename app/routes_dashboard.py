@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Channel, Publication, ApiKey
+from app.models import ArticleSource, Channel, FeedSource, Publication, ApiKey
 from app.services.platforms.blogger import BloggerPlatform
 from app.security import (
     verify_admin_password,
@@ -127,6 +127,9 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
     channels = db.query(Channel).all()
     publications = db.query(Publication).order_by(Publication.created_at.desc()).limit(50).all()
     api_keys = db.query(ApiKey).all()
+    # Feed RSS per channel + item hasil fetch terbaru (antrean rewrite).
+    feeds = db.query(FeedSource).order_by(FeedSource.created_at.desc()).all()
+    recent_sources = db.query(ArticleSource).order_by(ArticleSource.ingested_at.desc()).limit(20).all()
     # Hitung dari database, bukan dari daftar yang dibatasi 50 baris,
     # supaya angka di kartu statistik selalu benar.
     total_published = db.query(Publication).filter(Publication.status == "published").count()
@@ -193,6 +196,36 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
     # Pages dibaca live dari Blogger; kalau gagal dimuat, tampilkan
     # baris "Gagal memuat halaman" dan lanjutkan render, jangan 500.
     blogger_channels = [ch for ch in channels if ch.platform == 'blogger']
+    # Statistik kunjungan (server-side, toleran gagal): ambil dari
+    # Blogger pageViews untuk channel Blogger pertama. Blogger API v3
+    # pageViews HANYA mengembalikan angka agregat per rentang
+    # (30DAYS / 7DAYS / all) — tidak ada rincian per hari, jadi
+    # dashboard menampilkan total agregat, bukan deret harian.
+    stats_channel = blogger_channels[0] if blogger_channels else None
+    stats_30 = stats_7 = stats_all = None
+    stats_failed = False
+    if stats_channel:
+        try:
+            stats_driver = BloggerPlatform(channel_id=stats_channel.id, credentials=stats_channel.get_credentials())
+            stats_30 = stats_driver.get_page_views("30DAYS")
+            stats_7 = stats_driver.get_page_views("7DAYS")
+            stats_all = stats_driver.get_page_views("all")
+        except Exception:
+            stats_failed = True
+    if stats_channel is None:
+        stats_html = '<div class="text-sm text-slate-500">Belum ada blog Blogger yang terhubung.</div>'
+    elif stats_failed or stats_30 is None:
+        stats_html = '<div class="text-sm text-amber-400">Statistik belum tersedia — gagal mengambil data kunjungan dari Blogger.</div>'
+    else:
+        stats_html = f"""
+        <div class="text-3xl font-extrabold text-white">{stats_30}</div>
+        <div class="text-xs text-slate-400 mt-2">Total kunjungan 30 hari terakhir · {html_escape(stats_channel.name)}</div>
+        <div class="mt-4 space-y-1 text-sm">
+            <div class="flex justify-between border-t border-slate-800 pt-2"><span class="text-slate-400">7 hari terakhir</span><span class="font-semibold text-slate-200">{stats_7}</span></div>
+            <div class="flex justify-between border-t border-slate-800 pt-2"><span class="text-slate-400">Sepanjang waktu</span><span class="font-semibold text-slate-200">{stats_all}</span></div>
+        </div>
+        """
+    page_counts = {}
     page_rows = ""
     for ch in blogger_channels:
         try:
@@ -200,6 +233,9 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
             pages = page_driver.list_pages()
         except Exception:
             pages = None
+        # Jumlah halaman per channel dipakai tabel ringkasan multi-blog
+        # di section Dashboard; None = gagal dimuat -> tampil "-".
+        page_counts[ch.id] = len(pages) if pages is not None else None
         page_rows += f"""
         <tr class="border-b border-slate-800/60">
             <td colspan="3" class="py-2 px-3 sm:px-4 text-xs font-semibold text-slate-400">📄 {html_escape(ch.name)} <span class="font-mono text-emerald-400">{html_escape(ch.id)}</span></td>
@@ -227,6 +263,33 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
     if not blogger_channels:
         page_rows = """<tr><td colspan="3" class="py-8 text-center text-slate-500">Belum ada blog Blogger yang terhubung. Tambahkan akun blog dulu di atas.</td></tr>"""
 
+    # Tabel ringkasan multi-blog untuk section Dashboard: hitung dari
+    # tabel publications di DB; jumlah halaman dari driver.list_pages
+    # (sudah diambil di atas — kalau gagal tampil "-"); terakhir
+    # terbit = published_at terbaru channel itu (fallback created_at).
+    summary_rows = ""
+    for ch in channels:
+        n_pub = db.query(Publication).filter(Publication.channel_id == ch.id, Publication.status == "published").count()
+        n_draft = db.query(Publication).filter(Publication.channel_id == ch.id, Publication.status == "draft").count()
+        n_pages = page_counts.get(ch.id)
+        pages_cell = str(n_pages) if n_pages is not None else "-"
+        last_pub = db.query(Publication).filter(
+            Publication.channel_id == ch.id, Publication.status == "published"
+        ).order_by(Publication.published_at.desc()).first()
+        last_dt = (last_pub.published_at or last_pub.created_at) if last_pub else None
+        last_str = last_dt.strftime('%d/%m/%Y %H:%M') if last_dt else "-"
+        summary_rows += f"""
+        <tr class="border-b border-slate-800/60 hover:bg-slate-800/30 transition">
+            <td class="py-3 px-3 sm:px-4"><div class="text-sm font-medium text-slate-200">{html_escape(ch.name)}</div><div class="text-[11px] text-slate-500 font-mono">{html_escape(ch.id)}</div></td>
+            <td class="py-3 px-3 sm:px-4 text-sm text-slate-200">{n_pub}</td>
+            <td class="py-3 px-3 sm:px-4 text-sm text-slate-200">{n_draft}</td>
+            <td class="py-3 px-3 sm:px-4 text-sm text-slate-200">{pages_cell}</td>
+            <td class="py-3 px-3 sm:px-4 text-xs text-slate-400">{last_str}</td>
+        </tr>
+        """
+    if not channels:
+        summary_rows = """<tr><td colspan="5" class="py-8 text-center text-slate-500">Belum ada blog yang terhubung.</td></tr>"""
+
     # Opsi dropdown channel untuk form tambah halaman
     page_channel_options = "".join(
         f'<option value="{html_escape(ch.id, quote=True)}">{html_escape(ch.name)} ({html_escape(ch.id)})</option>'
@@ -234,17 +297,72 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
     )
 
     # Opsi dropdown channel untuk form Tulis Artikel (semua channel;
-    # channel blogger pertama terpilih sebagai default).
+    # channel blogger pertama terpilih sebagai default). data-words
+    # membawa target_word_count channel untuk tombol Cek SEO.
     first_blogger_id = blogger_channels[0].id if blogger_channels else None
     article_channel_options = ""
     for ch in channels:
         sel = " selected" if ch.id == first_blogger_id else ""
         article_channel_options += (
-            f'<option value="{html_escape(ch.id, quote=True)}"{sel}>'
+            f'<option value="{html_escape(ch.id, quote=True)}"{sel} '
+            f'data-words="{ch.target_word_count}">'
             f'{html_escape(ch.name)} ({html_escape(ch.id)})</option>'
         )
     if not channels:
         article_channel_options = '<option value="">Belum ada channel — tambahkan dulu</option>'
+
+    # Opsi dropdown channel untuk form tambah feed (semua channel).
+    feed_channel_options = ""
+    for ch in channels:
+        sel = " selected" if ch.id == first_blogger_id else ""
+        feed_channel_options += (
+            f'<option value="{html_escape(ch.id, quote=True)}"{sel}>'
+            f'{html_escape(ch.name)} ({html_escape(ch.id)})</option>'
+        )
+    if not channels:
+        feed_channel_options = '<option value="">Belum ada channel — tambahkan dulu</option>'
+
+    # Buat baris tabel feed RSS per channel.
+    feed_rows = ""
+    for f in feeds:
+        feed_title = f.title or f.feed_url
+        last = f.last_checked_at.strftime('%d/%m/%Y %H:%M') if f.last_checked_at else 'Belum pernah'
+        status_badge = '<span class="px-2 py-0.5 rounded text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Aktif</span>' if f.active else '<span class="px-2 py-0.5 rounded text-xs bg-slate-500/10 text-slate-400 border border-slate-500/30">Nonaktif</span>'
+        feed_rows += f"""
+        <tr class="border-b border-slate-800/60 hover:bg-slate-800/30 transition">
+            <td class="py-3 px-3 sm:px-4"><div class="text-sm font-medium text-slate-200">{html_escape(feed_title)}</div><div class="text-[11px] text-slate-500 mt-0.5">{html_escape(f.channel_id)}</div></td>
+            <td class="py-3 px-3 sm:px-4 text-xs text-slate-400 break-all max-w-xs">{html_escape(f.feed_url)}</td>
+            <td class="py-3 px-3 sm:px-4">{status_badge}</td>
+            <td class="py-3 px-3 sm:px-4 text-xs text-slate-400">{last}</td>
+            <td class="py-3 px-3 sm:px-4 text-right">
+                <div class="flex gap-1 justify-end">
+                    <button onclick="fetchFeed({f.id}, this)" class="text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded border border-emerald-500/30 transition">Ambil Sekarang</button>
+                    <button onclick="deleteFeed({f.id}, this)" class="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 px-2 py-1 rounded border border-red-500/30 transition">Hapus</button>
+                </div>
+            </td>
+        </tr>
+        """
+    if not feeds:
+        feed_rows = """<tr><td colspan="5" class="py-8 text-center text-slate-500">Belum ada feed RSS. Tambahkan feed di bawah untuk mulai mengumpulkan bahan artikel.</td></tr>"""
+
+    # Buat baris tabel item hasil fetch terbaru (antrean rewrite).
+    source_rows = ""
+    for s in recent_sources:
+        date_str = s.ingested_at.strftime('%d/%m/%Y %H:%M') if s.ingested_at else '-'
+        link_btn = f'<a href="{html_escape(s.url or "", quote=True)}" target="_blank" class="text-xs text-emerald-400 hover:underline">Buka Sumber →</a>' if s.url else '<span class="text-xs text-slate-500">-</span>'
+        source_rows += f"""
+        <tr class="border-b border-slate-800/60 hover:bg-slate-800/30 transition">
+            <td class="py-3 px-3 sm:px-4 text-sm font-medium text-slate-200 max-w-xs truncate">{html_escape(s.title or '(tanpa judul)')}</td>
+            <td class="py-3 px-3 sm:px-4 text-xs text-slate-400">{html_escape(s.source_name or '-')}</td>
+            <td class="py-3 px-3 sm:px-4">{link_btn}</td>
+            <td class="py-3 px-3 sm:px-4 text-xs text-slate-400">{date_str}</td>
+            <td class="py-3 px-3 sm:px-4 text-right">
+                <button onclick="useSourceAsDraft({s.id}, this)" class="text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded border border-emerald-500/30 transition">Jadikan Draf</button>
+            </td>
+        </tr>
+        """
+    if not recent_sources:
+        source_rows = """<tr><td colspan="5" class="py-8 text-center text-slate-500">Belum ada bahan dari feed. Klik "Ambil Sekarang" pada feed di atas.</td></tr>"""
 
     # Ringkasan artikel terbaru untuk section Dashboard.
     if publications:
@@ -261,7 +379,12 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
     # (class pub-extra) dan dibuka lewat tombol "Muat lebih banyak".
     pub_rows = ""
     for idx, p in enumerate(publications):
-        status_badge = '<span class="px-2 py-0.5 rounded text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Published</span>' if p.status == 'published' else '<span class="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-400 border border-amber-500/30">Draft</span>'
+        if p.status == 'published':
+            status_badge = '<span class="px-2 py-0.5 rounded text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Published</span>'
+        elif p.status == 'scheduled':
+            status_badge = '<span class="px-2 py-0.5 rounded text-xs bg-sky-500/10 text-sky-400 border border-sky-500/30">Terjadwal</span>'
+        else:
+            status_badge = '<span class="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-400 border border-amber-500/30">Draft</span>'
         link_btn = f'<a href="{p.remote_url}" target="_blank" class="text-xs text-emerald-400 hover:underline">Buka Link →</a>' if p.remote_url else '<span class="text-xs text-slate-500">-</span>'
         date_str = p.created_at.strftime('%d/%m/%Y %H:%M') if p.created_at else '-'
         rel = _rel_time(p.created_at)
@@ -270,11 +393,16 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
             actions = f"""
             <div class="flex gap-1 justify-end">
                 <button onclick="publishDraft({p.id}, this)" class="text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded border border-emerald-500/30 transition">Terbitkan</button>
+                <button onclick="openEditPublication(this)" data-id="{p.id}" data-title="{html_escape(p.title or '', quote=True)}" data-content="{html_escape(p.content_html or '', quote=True)}" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-2 py-1 rounded border border-slate-700 transition">Edit</button>
                 <button onclick="deletePublication({p.id}, this)" class="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 px-2 py-1 rounded border border-red-500/30 transition">Hapus</button>
             </div>
             """
         else:
-            actions = '<span class="text-xs text-slate-600">—</span>'
+            actions = f"""
+            <div class="flex gap-1 justify-end">
+                <button onclick="openEditPublication(this)" data-id="{p.id}" data-title="{html_escape(p.title or '', quote=True)}" data-content="{html_escape(p.content_html or '', quote=True)}" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-2 py-1 rounded border border-slate-700 transition">Edit</button>
+            </div>
+            """
         extra_class = " pub-extra hidden" if idx >= 15 else ""
         pub_rows += f"""
         <tr class="pub-row border-b border-slate-800/60 hover:bg-slate-800/30 transition{extra_class}" data-status="{p.status}" data-title="{html_escape((p.title or '').lower(), quote=True)}">
@@ -309,6 +437,28 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
         """
     if not api_keys:
         key_rows = """<tr><td colspan="6" class="py-8 text-center text-slate-500">Belum ada API Key untuk AI Agent. Buat key baru di bawah!</td></tr>"""
+
+    # Daftar artikel terjadwal (status "scheduled"), urut tanggal jadwal.
+    # Penjadwalan dilakukan lewat Blogger API posts().publish(publishDate)
+    # jadi Blogger menerbitkannya otomatis — bukan draf pengingat.
+    scheduled_pubs = db.query(Publication).filter(
+        Publication.status == "scheduled"
+    ).order_by(Publication.scheduled_at.asc()).limit(20).all()
+    scheduled_rows = ""
+    for sp in scheduled_pubs:
+        sched_str = sp.scheduled_at.strftime('%d/%m/%Y %H:%M') if sp.scheduled_at else '-'
+        sched_link = f'<a href="{sp.remote_url}" target="_blank" class="text-xs text-emerald-400 hover:underline">Buka Link →</a>' if sp.remote_url else '<span class="text-xs text-slate-500">-</span>'
+        scheduled_rows += f"""
+        <tr class="border-b border-slate-800/60 hover:bg-slate-800/30 transition">
+            <td class="py-3 px-3 sm:px-4 text-sm font-medium text-slate-200 max-w-xs truncate">{html_escape(sp.title or '')}</td>
+            <td class="py-3 px-3 sm:px-4 text-xs font-mono text-slate-400">{sp.channel_id}</td>
+            <td class="py-3 px-3 sm:px-4 text-xs text-slate-300">{sched_str} WIB</td>
+            <td class="py-3 px-3 sm:px-4"><span class="px-2 py-0.5 rounded text-xs bg-sky-500/10 text-sky-400 border border-sky-500/30">Terjadwal</span></td>
+            <td class="py-3 px-3 sm:px-4 text-right">{sched_link}</td>
+        </tr>
+        """
+    if not scheduled_pubs:
+        scheduled_rows = """<tr><td colspan="5" class="py-8 text-center text-slate-500">Belum ada artikel terjadwal. Isi "Jadwal Terbit" di form di atas, lalu klik Terbitkan.</td></tr>"""
 
     html = f"""
     <!DOCTYPE html>
@@ -346,6 +496,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 <button type="button" data-section="halaman" onclick="showSection('halaman')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">📄 Halaman</button>
                 <button type="button" data-section="riwayat" onclick="showSection('riwayat')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">🕘 Riwayat</button>
                 <button type="button" data-section="ingest" onclick="showSection('ingest')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">📥 Ingest</button>
+                <button type="button" data-section="komentar" onclick="showSection('komentar')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">💬 Komentar</button>
                 <button type="button" data-section="apikey" onclick="showSection('apikey')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">🔑 API Key</button>
             </nav>
             <div class="p-4 border-t border-slate-800 text-xs text-slate-500">
@@ -411,6 +562,13 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 </div>
             </div>
 
+            <!-- Kartu Statistik Kunjungan (Blogger pageViews, agregat per rentang) -->
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Total Kunjungan (30 hari)</div>
+                {stats_html}
+                <p class="text-[11px] text-slate-500 mt-4">Blogger API hanya memberi total agregat per rentang — tidak ada rincian kunjungan per hari.</p>
+            </div>
+
             <!-- Ringkasan -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <h2 class="text-lg font-bold text-white mb-1">Ringkasan</h2>
@@ -422,6 +580,30 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 <div class="flex flex-wrap gap-2 mt-5">
                     <button onclick="showSection('artikel')" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">✍️ Tulis Artikel</button>
                     <button onclick="showSection('channel')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-4 py-2 rounded-xl text-xs transition border border-slate-700">Lihat Channel</button>
+                </div>
+            </div>
+
+            <!-- Ringkasan Multi-Blog -->
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="mb-4">
+                    <h2 class="text-lg font-bold text-white">Ringkasan Multi-Blog</h2>
+                    <p class="text-xs text-slate-400">Per blog: artikel published, draf, halaman statis, dan terakhir terbit</p>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-xs uppercase tracking-wider text-slate-400">
+                                <th class="py-3 px-3 sm:px-4">Channel</th>
+                                <th class="py-3 px-3 sm:px-4">Artikel Published</th>
+                                <th class="py-3 px-3 sm:px-4">Draf</th>
+                                <th class="py-3 px-3 sm:px-4">Halaman</th>
+                                <th class="py-3 px-3 sm:px-4">Terakhir Terbit</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {summary_rows}
+                        </tbody>
+                    </table>
                 </div>
             </div>
             </section>
@@ -460,15 +642,55 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                         <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Meta Description (SEO)</label>
                         <input type="text" id="articleMeta" maxlength="160" placeholder="Ringkasan singkat 140-160 karakter untuk SEO" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
                     </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">URL Gambar Sampul (opsional)</label>
+                            <input type="url" id="articleImageUrl" placeholder="https://contoh.com/gambar.jpg" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Alt Text Gambar</label>
+                            <input type="text" id="articleImageAlt" placeholder="Deskripsi singkat gambar untuk SEO & aksesibilitas" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                    </div>
+                    <p class="text-[11px] text-slate-500">Gambar sampul harus berupa URL yang sudah di-host (misal di Blogger/Drive/CDN) — Blogger API tidak bisa mengunggah gambar. Gambar akan disisipkan di awal artikel.</p>
                     <div>
                         <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Konten HTML</label>
                         <textarea id="articleContent" required rows="10" placeholder="Tulis konten artikel dalam HTML, misal: &lt;h2&gt;Pendahuluan&lt;/h2&gt;&lt;p&gt;...&lt;/p&gt;" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"></textarea>
                     </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Jadwal Terbit (opsional)</label>
+                        <input type="datetime-local" id="articleScheduledAt" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        <p class="text-[11px] text-slate-500 mt-1">Isi tanggal & jam (WIB) untuk menjadwalkan: Blogger menerbitkan otomatis pada waktu itu. Kosongkan untuk terbit/draf biasa; jadwal di masa lalu diabaikan.</p>
+                    </div>
                     <div class="flex flex-wrap gap-2">
                         <button type="button" onclick="handleWriteArticle('draft', this)" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-4 py-2 rounded-xl text-xs transition border border-slate-700">Simpan sebagai Draf</button>
                         <button type="button" onclick="handleWriteArticle('publish', this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Terbitkan</button>
+                        <button type="button" id="checkSeoBtn" onclick="checkSeo(this)" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 font-bold px-4 py-2 rounded-xl text-xs transition border border-slate-700">🔍 Cek SEO</button>
                     </div>
+                    <div id="seoCheckResult" class="hidden mt-2"></div>
                 </form>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="mb-4">
+                    <h2 class="text-lg font-bold text-white">Artikel Terjadwal</h2>
+                    <p class="text-xs text-slate-400">Dijadwalkan lewat Blogger API — terbit otomatis pada tanggal yang dipilih</p>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-xs uppercase tracking-wider text-slate-400">
+                                <th class="py-3 px-3 sm:px-4">Judul Artikel</th>
+                                <th class="py-3 px-3 sm:px-4">Blog</th>
+                                <th class="py-3 px-3 sm:px-4">Jadwal Terbit</th>
+                                <th class="py-3 px-3 sm:px-4">Status</th>
+                                <th class="py-3 px-3 sm:px-4 text-right">Link</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {scheduled_rows}
+                        </tbody>
+                    </table>
+                </div>
             </div>
             </section>
 
@@ -598,6 +820,16 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     <p class="text-xs text-slate-400">Artikel yang dikirimkan oleh AI ke blog-blog Anda</p>
                 </div>
 
+                <div class="flex flex-col sm:flex-row gap-3 mb-4 items-start sm:items-center">
+                    <select id="bulkChannel" class="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        {feed_channel_options}
+                    </select>
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" onclick="bulkPublishDrafts(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Terbitkan Semua Draf</button>
+                        <button type="button" onclick="exportBackup(this)" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-4 py-2 rounded-xl text-xs transition border border-slate-700">⬇️ Export Backup</button>
+                    </div>
+                </div>
+
                 <div class="flex flex-col sm:flex-row gap-3 mb-4">
                     <div id="pubFilters" class="flex gap-2">
                         <button type="button" data-filter="all" onclick="setPubFilter('all', this)" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-emerald-500 text-slate-950">Semua</button>
@@ -632,18 +864,97 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
             </div>
             </section>
 
-            <!-- Section: Ingest (placeholder — UI ingest menyusul) -->
+            <!-- Section: Ingest (feed RSS + antrean rewrite) -->
             <section id="section-ingest" class="nav-section space-y-6 hidden">
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="mb-4">
-                    <h2 class="text-lg font-bold text-white">Ingest — Ambil Artikel dari Web / RSS</h2>
-                    <p class="text-xs text-slate-400">Fitur ingest tersedia lewat API; UI ingest menyusul.</p>
+                    <h2 class="text-lg font-bold text-white">Ingest — Feed RSS & Antrean Rewrite</h2>
+                    <p class="text-xs text-slate-400">Daftarkan feed RSS per blog, ambil item terbarunya, lalu jadikan bahan untuk ditulis ulang. Antrean ini hanya menyiapkan bahan — penulisan ulang dikerjakan AI agent supaya konten tetap orisinal, bukan spin mentah.</p>
                 </div>
-                <div class="p-4 rounded-xl bg-slate-800/60 border border-slate-700 text-sm text-slate-300 space-y-2">
-                    <p>Ambil isi artikel dari URL web atau teks mentah lewat endpoint:</p>
-                    <p><code class="bg-slate-800 text-emerald-400 px-1.5 py-0.5 rounded font-mono text-xs">POST /api/v1/ingest</code> — body <code class="bg-slate-800 text-emerald-400 px-1.5 py-0.5 rounded font-mono text-xs">{{"url": "..."}}</code> atau <code class="bg-slate-800 text-emerald-400 px-1.5 py-0.5 rounded font-mono text-xs">{{"raw_text": "..."}}</code></p>
-                    <p><code class="bg-slate-800 text-emerald-400 px-1.5 py-0.5 rounded font-mono text-xs">GET /api/v1/ingest/{{source_id}}</code> — ambil teks hasil ekstraksi berdasarkan ID sumber</p>
-                    <p class="text-xs text-slate-500">Dukungan RSS feed dan form ingest di dashboard akan ditambahkan pada tahap berikutnya.</p>
+
+                <div class="overflow-x-auto mb-6">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-xs uppercase tracking-wider text-slate-400">
+                                <th class="py-3 px-3 sm:px-4">Feed</th>
+                                <th class="py-3 px-3 sm:px-4">URL</th>
+                                <th class="py-3 px-3 sm:px-4">Status</th>
+                                <th class="py-3 px-3 sm:px-4">Terakhir Dicek</th>
+                                <th class="py-3 px-3 sm:px-4 text-right">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {feed_rows}
+                        </tbody>
+                    </table>
+                </div>
+
+                <form id="feedForm" onsubmit="event.preventDefault();" class="space-y-3 border-t border-slate-800 pt-5">
+                    <h3 class="text-sm font-bold text-white">Tambah Feed</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Blog</label>
+                            <select id="feedChannel" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                {feed_channel_options}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">URL Feed RSS</label>
+                            <input type="url" id="feedUrl" required placeholder="misal: https://contoh.com/feed.xml" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Judul Feed (opsional)</label>
+                            <input type="text" id="feedTitle" placeholder="misal: Blog Diart — diisi otomatis dari feed bila kosong" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" onclick="handleAddFeed(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Tambah Feed</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Antrean bahan hasil fetch -->
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="mb-4">
+                    <h2 class="text-lg font-bold text-white">Antrean Bahan — Hasil Fetch Terbaru</h2>
+                    <p class="text-xs text-slate-400">Item terbaru dari feed yang sudah diambil. Klik "Jadikan Draf" untuk memasukkan bahan ke form Tulis Artikel, lalu tulis ulang dengan bahasamu sendiri sebelum diterbitkan.</p>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-xs uppercase tracking-wider text-slate-400">
+                                <th class="py-3 px-3 sm:px-4">Judul</th>
+                                <th class="py-3 px-3 sm:px-4">Sumber</th>
+                                <th class="py-3 px-3 sm:px-4">Tautan</th>
+                                <th class="py-3 px-3 sm:px-4">Diambil</th>
+                                <th class="py-3 px-3 sm:px-4 text-right">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {source_rows}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            </section>
+
+            <!-- Section: Komentar (moderasi komentar Blogger) -->
+            <section id="section-komentar" class="nav-section space-y-6 hidden">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="mb-4">
+                    <h2 class="text-lg font-bold text-white">Komentar</h2>
+                    <p class="text-xs text-slate-400">Moderasi komentar blog dari Blogger — setujui, tandai spam, atau hapus. Pilih blog lalu klik Muat.</p>
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-3 mb-4 items-start sm:items-center">
+                    <select id="commentChannel" class="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        {page_channel_options}
+                    </select>
+                    <button type="button" onclick="loadComments(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Muat Komentar</button>
+                </div>
+
+                <div id="commentList" class="space-y-3">
+                    <div class="py-8 text-center text-sm text-slate-500">Pilih blog lalu klik "Muat Komentar".</div>
                 </div>
             </div>
             </section>
@@ -802,6 +1113,43 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
                         <button type="button" onclick="document.getElementById('channelSettingsModal').classList.add('hidden')" class="px-4 py-2 rounded-xl font-semibold text-slate-400 hover:bg-slate-800">Batal</button>
                         <button type="submit" id="saveChannelSettingsBtn" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-5 py-2 rounded-xl shadow-lg shadow-emerald-500/20">Simpan Pengaturan</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal Edit Artikel (edit draf maupun artikel published) -->
+        <div id="editPubModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-2xl w-full shadow-2xl my-8">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-bold text-white">Edit Artikel</h3>
+                    <button onclick="document.getElementById('editPubModal').classList.add('hidden')" class="text-slate-400 hover:text-white">✕</button>
+                </div>
+                <form id="editPubForm" onsubmit="handleSaveEditPublication(event)" class="space-y-4 text-xs">
+                    <input type="hidden" id="editPubId">
+                    <div>
+                        <label class="block font-semibold uppercase tracking-wider text-slate-400 mb-1">Judul Artikel</label>
+                        <input type="text" id="editPubTitle" placeholder="Judul artikel" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:ring-2 focus:ring-emerald-500">
+                    </div>
+                    <div id="editPubNote" class="hidden text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2">Konten artikel tidak bisa dimuat dari riwayat — isi konten baru di bawah ini.</div>
+                    <div>
+                        <label class="block font-semibold uppercase tracking-wider text-slate-400 mb-1">Konten HTML</label>
+                        <textarea id="editPubContent" rows="10" placeholder="Konten artikel dalam HTML" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:ring-2 focus:ring-emerald-500"></textarea>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-semibold uppercase tracking-wider text-slate-400 mb-1">URL Gambar Sampul (opsional)</label>
+                            <input type="url" id="editPubImageUrl" placeholder="https://contoh.com/gambar.jpg" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                        <div>
+                            <label class="block font-semibold uppercase tracking-wider text-slate-400 mb-1">Alt Text Gambar</label>
+                            <input type="text" id="editPubImageAlt" placeholder="Deskripsi singkat gambar" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                    </div>
+                    <p class="text-[11px] text-slate-500">Gambar sampul harus berupa URL yang sudah di-host (misal di Blogger/Drive/CDN) — Blogger API tidak bisa mengunggah gambar. Gambar akan disisipkan di awal artikel, menggantikan gambar sampul lama bila ada.</p>
+                    <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
+                        <button type="button" onclick="document.getElementById('editPubModal').classList.add('hidden')" class="px-4 py-2 rounded-xl font-semibold text-slate-400 hover:bg-slate-800">Batal</button>
+                        <button type="submit" id="saveEditPubBtn" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-5 py-2 rounded-xl shadow-lg shadow-emerald-500/20">Simpan Perubahan</button>
                     </div>
                 </form>
             </div>
@@ -1096,6 +1444,190 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 }}
             }}
 
+            // --- Terbitkan Semua Draf + Export Backup (Riwayat) ---
+            async function bulkPublishDrafts(btn) {{
+                const channelId = document.getElementById('bulkChannel').value;
+                if (!channelId) {{
+                    showToast('Pilih dulu blognya.', 'error');
+                    return;
+                }}
+                const ok = await askConfirm('Terbitkan semua draf?', 'Semua draf pada blog ini akan diterbitkan ke Blogger satu per satu.');
+                if (!ok) return;
+                setBtnLoading(btn, true, 'Menerbitkan…');
+                try {{
+                    const res = await fetch('/api/v1/publish/bulk/publish', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ channel_id: channelId }})
+                    }});
+                    const data = await res.json();
+                    if (res.ok) {{
+                        showToast(`Selesai: ${{data.published}} diterbitkan, ${{data.failed}} gagal.`);
+                        setTimeout(() => window.location.reload(), 1200);
+                    }} else {{
+                        showToast('Gagal: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            async function exportBackup(btn) {{
+                setBtnLoading(btn, true, 'Mengunduh…');
+                try {{
+                    const res = await fetch('/api/v1/backup');
+                    if (!res.ok) {{
+                        showToast('Gagal mengunduh backup.', 'error');
+                        return;
+                    }}
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'blog-connector-backup.json';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                    showToast('Backup berhasil diunduh.');
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            // --- Moderasi Komentar (Blogger) ---
+            // Isi komentar datang dari Blogger dan bisa mengandung HTML,
+            // jadi selalu di-escape sebelum dimasukkan ke innerHTML.
+            function escapeHtml(s) {{
+                const d = document.createElement('div');
+                d.innerText = s || '';
+                return d.innerHTML;
+            }}
+            function commentStatusBadge(status) {{
+                const s = (status || '').toUpperCase();
+                if (s === 'LIVE') return '<span class="px-2 py-0.5 rounded text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Live</span>';
+                if (s === 'SPAM') return '<span class="px-2 py-0.5 rounded text-xs bg-red-500/10 text-red-400 border border-red-500/30">Spam</span>';
+                return '<span class="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-400 border border-amber-500/30">Menunggu</span>';
+            }}
+            async function loadComments(btn) {{
+                const channelId = document.getElementById('commentChannel').value;
+                const box = document.getElementById('commentList');
+                if (!channelId) {{
+                    showToast('Pilih dulu blognya.', 'error');
+                    return;
+                }}
+                setBtnLoading(btn, true, 'Memuat…');
+                try {{
+                    const res = await fetch(`/api/v1/comments?channel_id=${{encodeURIComponent(channelId)}}`);
+                    const data = await res.json();
+                    if (!res.ok) {{
+                        showToast('Gagal memuat komentar: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                        return;
+                    }}
+                    if (!data.length) {{
+                        box.innerHTML = '<div class="py-8 text-center text-sm text-slate-500">Belum ada komentar di blog ini.</div>';
+                        return;
+                    }}
+                    box.innerHTML = data.map((c) => {{
+                        const dateStr = c.published ? new Date(c.published).toLocaleString('id-ID') : '-';
+                        // Moderasi Blogger butuh post_id (endpoint-nya
+                        // per-postingan); tanpa itu tombol dimatikan.
+                        const actions = c.post_id
+                            ? `<div class="flex gap-1 justify-end shrink-0">
+                                <button onclick="approveComment('${{c.id}}', '${{c.post_id}}', this)" class="text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded border border-emerald-500/30 transition">Setujui</button>
+                                <button onclick="spamComment('${{c.id}}', '${{c.post_id}}', this)" class="text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-1 rounded border border-amber-500/30 transition">Spam</button>
+                                <button onclick="deleteComment('${{c.id}}', '${{c.post_id}}', this)" class="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 px-2 py-1 rounded border border-red-500/30 transition">Hapus</button>
+                            </div>`
+                            : '<span class="text-[11px] text-slate-500 shrink-0">tanpa post — tidak bisa dimoderasi</span>';
+                        return `<div class="bg-slate-800/50 border border-slate-800 rounded-xl p-4 flex gap-3 items-start">
+                            <div class="flex-1 min-w-0">
+                                <div class="flex flex-wrap items-center gap-2 mb-1">
+                                    <span class="text-sm font-semibold text-slate-200">${{escapeHtml(c.author)}}</span>
+                                    ${{commentStatusBadge(c.status)}}
+                                    <span class="text-[11px] text-slate-500">${{dateStr}}</span>
+                                </div>
+                                <div class="text-sm text-slate-300 break-words">${{escapeHtml(c.content)}}</div>
+                            </div>
+                            ${{actions}}
+                        </div>`;
+                    }}).join('');
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+            async function approveComment(commentId, postId, btn) {{
+                const channelId = document.getElementById('commentChannel').value;
+                setBtnLoading(btn, true, 'Menyetujui…');
+                try {{
+                    const res = await fetch(`/api/v1/comments/${{encodeURIComponent(commentId)}}/approve`, {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ channel_id: channelId, post_id: postId }})
+                    }});
+                    const data = await res.json();
+                    if (res.ok && data.ok) {{
+                        showToast('Komentar disetujui.');
+                        loadComments();
+                    }} else {{
+                        showToast('Gagal: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+            async function spamComment(commentId, postId, btn) {{
+                const ok = await askConfirm('Tandai sebagai spam?', 'Komentar ini akan ditandai sebagai spam di Blogger.');
+                if (!ok) return;
+                const channelId = document.getElementById('commentChannel').value;
+                setBtnLoading(btn, true, 'Menandai…');
+                try {{
+                    const res = await fetch(`/api/v1/comments/${{encodeURIComponent(commentId)}}/spam`, {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ channel_id: channelId, post_id: postId }})
+                    }});
+                    const data = await res.json();
+                    if (res.ok && data.ok) {{
+                        showToast('Komentar ditandai sebagai spam.');
+                        loadComments();
+                    }} else {{
+                        showToast('Gagal: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+            async function deleteComment(commentId, postId, btn) {{
+                const ok = await askConfirm('Hapus komentar?', 'Komentar ini akan dihapus dari Blogger. Tindakan ini tidak bisa dibatalkan.');
+                if (!ok) return;
+                const channelId = document.getElementById('commentChannel').value;
+                setBtnLoading(btn, true, 'Menghapus…');
+                try {{
+                    const res = await fetch(`/api/v1/comments/${{encodeURIComponent(commentId)}}?channel_id=${{encodeURIComponent(channelId)}}&post_id=${{encodeURIComponent(postId)}}`, {{ method: 'DELETE' }});
+                    const data = await res.json();
+                    if (res.ok && data.ok) {{
+                        showToast('Komentar berhasil dihapus.');
+                        loadComments();
+                    }} else {{
+                        showToast('Gagal: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
             async function handleCreatePage(status, btn) {{
                 const channelId = document.getElementById('pageChannel').value;
                 const title = document.getElementById('pageTitle').value.trim();
@@ -1195,8 +1727,100 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 }}
             }}
 
+            // --- Feed RSS + antrean rewrite ---
+            async function handleAddFeed(btn) {{
+                const channelId = document.getElementById('feedChannel').value;
+                const feedUrl = document.getElementById('feedUrl').value.trim();
+                const feedTitle = document.getElementById('feedTitle').value.trim();
+                if (!channelId || !feedUrl) {{
+                    showToast('Isi dulu blog dan URL feed RSS-nya.', 'error');
+                    return;
+                }}
+                const payload = {{channel_id: channelId, feed_url: feedUrl}};
+                if (feedTitle) payload.title = feedTitle;
+                setBtnLoading(btn, true, 'Menambahkan…');
+                try {{
+                    const res = await fetch('/api/v1/feeds', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify(payload)
+                    }});
+                    const data = await res.json();
+                    if (res.ok) {{
+                        showToast('Feed RSS berhasil ditambahkan.');
+                        setTimeout(() => window.location.reload(), 800);
+                    }} else {{
+                        showToast('Gagal: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            async function fetchFeed(feedId, btn) {{
+                setBtnLoading(btn, true, 'Mengambil…');
+                try {{
+                    const res = await fetch(`/api/v1/feeds/${{feedId}}/fetch`, {{ method: 'POST' }});
+                    const data = await res.json();
+                    if (res.ok) {{
+                        showToast(`Feed diambil: ${{data.added}} bahan baru, ${{data.skipped}} dilewati (sudah ada).`);
+                        setTimeout(() => window.location.reload(), 1000);
+                    }} else {{
+                        showToast('Gagal mengambil feed: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            async function deleteFeed(feedId, btn) {{
+                const ok = await askConfirm('Hapus feed?', 'Feed ini akan dihapus dari daftar. Bahan yang sudah diambil tidak ikut terhapus.');
+                if (!ok) return;
+                setBtnLoading(btn, true, 'Menghapus…');
+                try {{
+                    const res = await fetch(`/api/v1/feeds/${{feedId}}`, {{ method: 'DELETE' }});
+                    if (res.ok) {{
+                        showToast('Feed berhasil dihapus.');
+                        setTimeout(() => window.location.reload(), 800);
+                    }} else {{
+                        showToast('Gagal menghapus feed.', 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            // Isi form Tulis Artikel dengan bahan dari antrean, lalu pindah ke
+            // section Artikel. Bahan TIDAK diterbitkan otomatis — tulis ulang
+            // dulu dengan bahasa sendiri sebelum disimpan/diterbitkan.
+            async function useSourceAsDraft(sourceId, btn) {{
+                setBtnLoading(btn, true, 'Memuat…');
+                try {{
+                    const res = await fetch(`/api/v1/ingest/${{sourceId}}`);
+                    const data = await res.json();
+                    if (!res.ok) {{
+                        showToast('Gagal memuat bahan: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                        return;
+                    }}
+                    document.getElementById('articleTitle').value = data.title || '';
+                    document.getElementById('articleContent').value = data.raw_content || '';
+                    showToast('Bahan dimasukkan ke form Tulis Artikel — tulis ulang dengan bahasamu sendiri sebelum diterbitkan.');
+                    showSection('artikel');
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
             // --- Navigasi sidebar (tampilkan satu section saja) ---
-            const SECTION_TITLES = {{dashboard: 'Dashboard', channel: 'Channel', artikel: 'Artikel', halaman: 'Halaman', riwayat: 'Riwayat', ingest: 'Ingest', apikey: 'API Key'}};
+            const SECTION_TITLES = {{dashboard: 'Dashboard', channel: 'Channel', artikel: 'Artikel', halaman: 'Halaman', riwayat: 'Riwayat', ingest: 'Ingest', komentar: 'Komentar', apikey: 'API Key'}};
             function showSection(name) {{
                 document.querySelectorAll('.nav-section').forEach((s) => s.classList.add('hidden'));
                 const target = document.getElementById('section-' + name);
@@ -1268,6 +1892,53 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 }}
             }}
 
+            // --- Cek SEO (tanpa reload, pakai target kata channel terpilih) ---
+            async function checkSeo(btn) {{
+                const title = document.getElementById('articleTitle').value.trim();
+                const meta = document.getElementById('articleMeta').value.trim();
+                let content = document.getElementById('articleContent').value.trim();
+                if (!title && !content) {{
+                    showToast('Isi dulu judul atau konten artikelnya untuk dicek.', 'error');
+                    return;
+                }}
+                // Gambar sampul ikut dihitung seperti saat publish (disisipkan di awal konten).
+                const imgUrl = document.getElementById('articleImageUrl').value.trim();
+                if (imgUrl) {{
+                    const imgAlt = document.getElementById('articleImageAlt').value.trim();
+                    content = '<img src="' + imgUrl.replace(/"/g, '&quot;') + '" alt="' + imgAlt.replace(/"/g, '&quot;') + '">\n' + content;
+                }}
+                const sel = document.getElementById('articleChannel');
+                const opt = sel.options[sel.selectedIndex];
+                const words = parseInt(opt ? opt.dataset.words : '', 10);
+                const payload = {{title: title, meta_description: meta, content_html: content, target_word_count: isNaN(words) ? 800 : words}};
+                const box = document.getElementById('seoCheckResult');
+                setBtnLoading(btn, true, 'Mengecek…');
+                try {{
+                    const res = await fetch('/api/v1/seo-check', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify(payload)
+                    }});
+                    const data = await res.json();
+                    if (!res.ok) {{
+                        showToast('Gagal cek SEO: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                        return;
+                    }}
+                    const rows = (data.checks || []).map((c) => {{
+                        const icon = c.passed ? '✅' : '❌';
+                        const cls = c.passed ? 'text-emerald-400' : 'text-red-400';
+                        return '<li class="flex gap-2 text-xs ' + cls + '"><span>' + icon + '</span><span><span class="font-semibold text-slate-200">' + c.label + '</span> <span class="text-slate-400">— ' + c.detail + '</span></span></li>';
+                    }}).join('');
+                    const scoreCls = data.score >= 80 ? 'text-emerald-400' : (data.score >= 50 ? 'text-amber-400' : 'text-red-400');
+                    box.innerHTML = '<div class="bg-slate-800 border border-slate-700 rounded-xl p-4"><div class="text-sm font-bold text-white mb-2">Skor SEO: <span class="' + scoreCls + '">' + data.score + '/100</span></div><ul class="space-y-1.5">' + rows + '</ul></div>';
+                    box.classList.remove('hidden');
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
             // --- Tulis Artikel (pakai endpoint publish yang sudah ada) ---
             async function handleWriteArticle(status, btn) {{
                 const channelId = document.getElementById('articleChannel').value;
@@ -1283,6 +1954,14 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 const item = {{channel_id: channelId, title: title, content_html: content, status: status, labels: labels}};
                 if (slug) item.slug = slug;
                 if (meta) item.meta_description = meta;
+                const sched = document.getElementById('articleScheduledAt').value.trim();
+                if (sched) item.scheduled_at = sched;
+                const imgUrl = document.getElementById('articleImageUrl').value.trim();
+                if (imgUrl) {{
+                    item.cover_image_url = imgUrl;
+                    const imgAlt = document.getElementById('articleImageAlt').value.trim();
+                    if (imgAlt) item.cover_image_alt = imgAlt;
+                }}
                 setBtnLoading(btn, true, status === 'publish' ? 'Menerbitkan…' : 'Menyimpan…');
                 try {{
                     const res = await fetch('/api/v1/publish', {{
@@ -1292,11 +1971,97 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     }});
                     const data = await res.json();
                     const result = (data.results || [])[0];
-                    if (res.ok && result && (result.status === 'draft' || result.status === 'published')) {{
-                        showToast(status === 'publish' ? 'Artikel berhasil diterbitkan.' + (result.remote_url ? ' ' + result.remote_url : '') : 'Artikel berhasil disimpan sebagai draf.');
+                    if (res.ok && result && (result.status === 'draft' || result.status === 'published' || result.status === 'scheduled')) {{
+                        const msg = result.status === 'scheduled'
+                            ? 'Artikel berhasil dijadwalkan — Blogger menerbitkannya otomatis.'
+                            : (status === 'publish' ? 'Artikel berhasil diterbitkan.' + (result.remote_url ? ' ' + result.remote_url : '') : 'Artikel berhasil disimpan sebagai draf.');
+                        showToast(msg);
                         setTimeout(() => window.location.reload(), 1000);
                     }} else {{
                         showToast('Gagal: ' + ((result && result.error_message) || data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            // --- Edit Artikel (draf maupun published) ---
+            // Pisahkan <img> gambar sampul di awal konten ke field gambar,
+            // supaya textarea hanya berisi isi artikel.
+            function fillEditContent(content) {{
+                let body = content || '';
+                const m = body.match(/^\\s*<img\\b[^>]*>/i);
+                if (m) {{
+                    const tag = m[0];
+                    const src = tag.match(/src\\s*=\\s*["']([^"']*)["']/i);
+                    const alt = tag.match(/alt\\s*=\\s*["']([^"']*)["']/i);
+                    if (src) document.getElementById('editPubImageUrl').value = src[1];
+                    if (alt) document.getElementById('editPubImageAlt').value = alt[1];
+                    body = body.slice(m[0].length).replace(/^\\s+/, '');
+                }}
+                document.getElementById('editPubContent').value = body;
+            }}
+            function openEditPublication(btn) {{
+                const pubId = btn.dataset.id;
+                const title = btn.dataset.title || '';
+                const content = btn.dataset.content || '';
+                document.getElementById('editPubId').value = pubId;
+                document.getElementById('editPubTitle').value = title;
+                document.getElementById('editPubImageUrl').value = '';
+                document.getElementById('editPubImageAlt').value = '';
+                document.getElementById('editPubNote').classList.add('hidden');
+                fillEditContent(content);
+                document.getElementById('editPubModal').classList.remove('hidden');
+                if (!content) {{
+                    // Konten tidak tersedia di halaman — ambil dari API.
+                    fetch(`/api/v1/publish/${{pubId}}`)
+                        .then((r) => (r.ok ? r.json() : null))
+                        .then((data) => {{
+                            if (data && data.content_html) {{
+                                fillEditContent(data.content_html);
+                            }} else {{
+                                document.getElementById('editPubNote').classList.remove('hidden');
+                            }}
+                        }})
+                        .catch(() => {{
+                            document.getElementById('editPubNote').classList.remove('hidden');
+                        }});
+                }}
+            }}
+            async function handleSaveEditPublication(e) {{
+                e.preventDefault();
+                const pubId = document.getElementById('editPubId').value;
+                const title = document.getElementById('editPubTitle').value.trim();
+                const content = document.getElementById('editPubContent').value.trim();
+                if (!title && !content) {{
+                    showToast('Isi minimal judul atau konten baru.', 'error');
+                    return;
+                }}
+                const payload = {{}};
+                if (title) payload.title = title;
+                if (content) payload.content_html = content;
+                const imgUrl = document.getElementById('editPubImageUrl').value.trim();
+                if (imgUrl) {{
+                    payload.cover_image_url = imgUrl;
+                    payload.cover_image_alt = document.getElementById('editPubImageAlt').value.trim();
+                }}
+                const btn = document.getElementById('saveEditPubBtn');
+                setBtnLoading(btn, true, 'Menyimpan…');
+                try {{
+                    const res = await fetch(`/api/v1/publish/${{pubId}}`, {{
+                        method: 'PUT',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify(payload)
+                    }});
+                    const data = await res.json();
+                    if (res.ok && data && data.status !== 'failed') {{
+                        showToast('Artikel berhasil diperbarui.');
+                        document.getElementById('editPubModal').classList.add('hidden');
+                        setTimeout(() => window.location.reload(), 800);
+                    }} else {{
+                        showToast('Gagal menyimpan: ' + ((data && (data.error_message || data.detail)) || 'Terjadi kesalahan'), 'error');
                     }}
                 }} catch (err) {{
                     showToast('Error: ' + err, 'error');

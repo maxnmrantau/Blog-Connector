@@ -82,11 +82,16 @@ class BloggerPlatform(BaseBlogPlatform):
                 error_message=f"Terjadi kesalahan saat memposting ke Blogger: {str(e)}"
             )
 
-    def publish_draft(self, post_id: str) -> PublishResult:
+    def publish_draft(self, post_id: str, publish_date: Optional[str] = None) -> PublishResult:
         """
         Menerbitkan draf yang sudah ada di Blogger lewat
         posts().publish() — tidak membuat postingan baru, jadi
-        tidak ada duplikat.
+        tidak ada duplikat. Kalau publish_date (RFC 3339, masa
+        depan) diisi, draf dijadwalkan: Blogger menerbitkannya
+        otomatis pada waktu itu. Ini cara penjadwalan yang
+        didokumentasikan Blogger API v3 (parameter publishDate);
+        field `published` di body insert TIDAK didukung untuk
+        menjadwalkan postingan baru.
         """
         blog_id = self.credentials.get("blog_id")
         if not blog_id:
@@ -97,9 +102,13 @@ class BloggerPlatform(BaseBlogPlatform):
 
         try:
             service = self._get_service()
+            kwargs: Dict[str, Any] = {}
+            if publish_date:
+                kwargs["publishDate"] = publish_date
             response = service.posts().publish(
                 blogId=str(blog_id),
-                postId=str(post_id)
+                postId=str(post_id),
+                **kwargs
             ).execute()
 
             post_url = response.get("url") if isinstance(response, dict) else None
@@ -121,6 +130,59 @@ class BloggerPlatform(BaseBlogPlatform):
             return PublishResult(
                 success=False,
                 error_message=f"Terjadi kesalahan saat menerbitkan draf di Blogger: {str(e)}"
+            )
+
+    def update_post(
+        self,
+        post_id: str,
+        title: str,
+        content_html: str
+    ) -> PublishResult:
+        """
+        Memperbarui judul dan konten postingan yang sudah ada di Blogger
+        lewat posts().update() — berlaku untuk draf maupun artikel yang
+        sudah published, tanpa membuat postingan baru.
+        """
+        blog_id = self.credentials.get("blog_id")
+        if not blog_id:
+            return PublishResult(
+                success=False,
+                error_message="blog_id belum ditentukan pada profil akun Blogger ini."
+            )
+
+        try:
+            service = self._get_service()
+            body = {
+                "title": title,
+                "content": content_html,
+            }
+
+            request = service.posts().update(
+                blogId=str(blog_id),
+                postId=str(post_id),
+                body=body
+            )
+            response = request.execute()
+
+            post_url = response.get("url") if isinstance(response, dict) else None
+
+            return PublishResult(
+                success=True,
+                remote_post_id=str(post_id),
+                remote_url=post_url,
+                raw_response=response if isinstance(response, dict) else None
+            )
+
+        except HttpError as error:
+            error_details = error.error_details if hasattr(error, 'error_details') else str(error)
+            return PublishResult(
+                success=False,
+                error_message=f"Google Blogger API Error [{error.status_code}]: {error_details}"
+            )
+        except Exception as e:
+            return PublishResult(
+                success=False,
+                error_message=f"Terjadi kesalahan saat memperbarui postingan di Blogger: {str(e)}"
             )
 
     def delete_post(self, post_id: str) -> PublishResult:
@@ -294,3 +356,126 @@ class BloggerPlatform(BaseBlogPlatform):
             ]
         except Exception as e:
             raise RuntimeError(f"Gagal mengambil daftar blog dari akun Google: {str(e)}")
+
+    def get_page_views(self, time_range: str) -> int:
+        """
+        Total kunjungan blog untuk satu rentang waktu lewat
+        pageViews().get(blogId, range=...). Nilai range yang sah
+        menurut dokumentasi Blogger API v3: "30DAYS", "7DAYS", dan
+        "all" (sepanjang waktu) — BUKAN "ALL_TIME". Responsnya
+        {"kind": "blogger#page_views", "blogId": ..., "counts":
+        [{"timeRange": ..., "count": ...}]} — satu angka agregat
+        per rentang, TANPA rincian per hari. Mengangkat RuntimeError
+        kalau blog_id belum ada atau API gagal, supaya pemanggil
+        bisa menampilkan "belum tersedia" / 502 dengan pesan jelas.
+        """
+        blog_id = self.credentials.get("blog_id")
+        if not blog_id:
+            raise RuntimeError("blog_id belum ditentukan pada profil akun Blogger ini.")
+
+        try:
+            service = self._get_service()
+            response = service.pageViews().get(
+                blogId=str(blog_id),
+                range=time_range
+            ).execute()
+        except HttpError as error:
+            error_details = error.error_details if hasattr(error, 'error_details') else str(error)
+            raise RuntimeError(
+                f"Google Blogger API Error [{error.status_code}]: {error_details}"
+            )
+        except Exception as e:
+            raise RuntimeError(f"Gagal mengambil statistik kunjungan dari Blogger: {str(e)}")
+
+        if not isinstance(response, dict):
+            return 0
+        counts = response.get("counts", []) or []
+        wanted = time_range.upper()
+        for entry in counts:
+            entry_range = (entry.get("timeRange") or "").upper()
+            # Untuk range "all", Blogger mengembalikan timeRange
+            # "ALL_TIME" (atau "all" di beberapa versi discovery doc).
+            if entry_range == wanted or (wanted == "ALL" and entry_range in ("ALL_TIME", "ALL")):
+                return int(entry.get("count") or 0)
+        if len(counts) == 1:
+            return int(counts[0].get("count") or 0)
+        return sum(int(entry.get("count") or 0) for entry in counts)
+
+    def list_comments(self) -> List[Dict[str, Any]]:
+        """
+        Daftar komentar blog (semua postingan) lewat
+        comments().listByBlog(blogId) — ini satu-satunya method
+        list komentar tingkat blog; comments().list() justru
+        per-postingan. Mengangkat HttpError supaya pemanggil bisa
+        memetakan 404 (blog/komentar tidak ditemukan).
+        """
+        blog_id = self.credentials.get("blog_id")
+        if not blog_id:
+            raise RuntimeError("blog_id belum ditentukan pada profil akun Blogger ini.")
+
+        service = self._get_service()
+        response = service.comments().listByBlog(
+            blogId=str(blog_id),
+            fetchBodies=True,
+            maxResults=100
+        ).execute()
+        items = response.get("items", []) if isinstance(response, dict) else []
+        return [
+            {
+                "id": item.get("id"),
+                "author": (item.get("author") or {}).get("displayName") or "Anonim",
+                "content": item.get("content"),
+                "status": item.get("status"),
+                "published": item.get("published"),
+                "post_id": (item.get("post") or {}).get("id"),
+            }
+            for item in items
+        ]
+
+    def _moderate_comment(
+        self, action: str, post_id: str, comment_id: str
+    ) -> PublishResult:
+        """
+        Jalur bersama approve / markAsSpam / delete komentar.
+        Ketiga method Blogger API v3 ini per-postingan:
+        POST /blogs/{blogId}/posts/{postId}/comments/{commentId}/approve
+        (dan .../spam, DELETE ...). HttpError dibiarkan naik supaya
+        pemanggil bisa memetakan 404 — berbeda dengan method publish
+        yang mengembalikan PublishResult(success=False).
+        """
+        blog_id = self.credentials.get("blog_id")
+        if not blog_id:
+            raise RuntimeError("blog_id belum ditentukan pada profil akun Blogger ini.")
+
+        service = self._get_service()
+        comments = service.comments()
+        if action == "approve":
+            request = comments.approve(
+                blogId=str(blog_id), postId=str(post_id), commentId=str(comment_id)
+            )
+        elif action == "spam":
+            request = comments.markAsSpam(
+                blogId=str(blog_id), postId=str(post_id), commentId=str(comment_id)
+            )
+        else:
+            request = comments.delete(
+                blogId=str(blog_id), postId=str(post_id), commentId=str(comment_id)
+            )
+        response = request.execute()
+        return PublishResult(
+            success=True,
+            remote_post_id=str(comment_id),
+            raw_response=response if isinstance(response, dict) else None
+        )
+
+    def approve_comment(self, post_id: str, comment_id: str) -> PublishResult:
+        """Menyetujui komentar lewat comments().approve() (per-postingan)."""
+        return self._moderate_comment("approve", post_id, comment_id)
+
+    def mark_comment_as_spam(self, post_id: str, comment_id: str) -> PublishResult:
+        """Menandai komentar sebagai spam lewat comments().markAsSpam() (per-postingan)."""
+        return self._moderate_comment("spam", post_id, comment_id)
+
+    def delete_comment(self, post_id: str, comment_id: str) -> PublishResult:
+        """Menghapus komentar lewat comments().delete() (per-postingan)."""
+        return self._moderate_comment("delete", post_id, comment_id)
