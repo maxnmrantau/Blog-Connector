@@ -26,3 +26,18 @@ class BaseBlogPlatform(ABC):
         Mempublikasikan atau membuat draf artikel ke platform target.
         """
         pass
+
+    @abstractmethod
+    def publish_draft(self, post_id: str) -> PublishResult:
+        """
+        Menerbitkan draf yang sudah ada di platform target tanpa
+        membuat postingan baru (menghindari duplikat).
+        """
+        pass
+
+    @abstractmethod
+    def delete_post(self, post_id: str) -> PublishResult:
+        """
+        Menghapus sebuah postingan dari platform target.
+        """
+        pass

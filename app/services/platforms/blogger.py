@@ -82,6 +82,80 @@ class BloggerPlatform(BaseBlogPlatform):
                 error_message=f"Terjadi kesalahan saat memposting ke Blogger: {str(e)}"
             )
 
+    def publish_draft(self, post_id: str) -> PublishResult:
+        """
+        Menerbitkan draf yang sudah ada di Blogger lewat
+        posts().publish() — tidak membuat postingan baru, jadi
+        tidak ada duplikat.
+        """
+        blog_id = self.credentials.get("blog_id")
+        if not blog_id:
+            return PublishResult(
+                success=False,
+                error_message="blog_id belum ditentukan pada profil akun Blogger ini."
+            )
+
+        try:
+            service = self._get_service()
+            response = service.posts().publish(
+                blogId=str(blog_id),
+                postId=str(post_id)
+            ).execute()
+
+            post_url = response.get("url") if isinstance(response, dict) else None
+
+            return PublishResult(
+                success=True,
+                remote_post_id=str(post_id),
+                remote_url=post_url,
+                raw_response=response if isinstance(response, dict) else None
+            )
+
+        except HttpError as error:
+            error_details = error.error_details if hasattr(error, 'error_details') else str(error)
+            return PublishResult(
+                success=False,
+                error_message=f"Google Blogger API Error [{error.status_code}]: {error_details}"
+            )
+        except Exception as e:
+            return PublishResult(
+                success=False,
+                error_message=f"Terjadi kesalahan saat menerbitkan draf di Blogger: {str(e)}"
+            )
+
+    def delete_post(self, post_id: str) -> PublishResult:
+        """Menghapus sebuah postingan dari Blogger lewat posts().delete()."""
+        blog_id = self.credentials.get("blog_id")
+        if not blog_id:
+            return PublishResult(
+                success=False,
+                error_message="blog_id belum ditentukan pada profil akun Blogger ini."
+            )
+
+        try:
+            service = self._get_service()
+            service.posts().delete(
+                blogId=str(blog_id),
+                postId=str(post_id)
+            ).execute()
+
+            return PublishResult(
+                success=True,
+                remote_post_id=str(post_id)
+            )
+
+        except HttpError as error:
+            error_details = error.error_details if hasattr(error, 'error_details') else str(error)
+            return PublishResult(
+                success=False,
+                error_message=f"Google Blogger API Error [{error.status_code}]: {error_details}"
+            )
+        except Exception as e:
+            return PublishResult(
+                success=False,
+                error_message=f"Terjadi kesalahan saat menghapus postingan di Blogger: {str(e)}"
+            )
+
     def list_user_blogs(self) -> List[Dict[str, Any]]:
         """
         Membantu menemukan daftar blog dan blogId yang dimiliki oleh akun Google ini.

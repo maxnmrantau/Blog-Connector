@@ -44,6 +44,34 @@ def publish_articles(
         creds = channel.get_credentials()
         is_draft = item.status.lower() != "publish"
 
+        # Penjaga duplikat: kalau slug yang sama sudah ada sebagai draf di
+        # channel ini, jangan membuat postingan baru di Blogger. Terbitkan
+        # draf yang sudah ada lewat POST /api/v1/publish/{id}/publish.
+        if item.slug:
+            existing_draft = db.query(Publication).filter(
+                Publication.channel_id == channel.id,
+                Publication.slug == item.slug,
+                Publication.status == "draft"
+            ).first()
+            if existing_draft:
+                results.append(
+                    PublicationResult(
+                        channel_id=channel.id,
+                        channel_name=channel.name,
+                        platform=channel.platform,
+                        status="failed",
+                        title=item.title,
+                        error_message=(
+                            f"Sudah ada draf dengan slug '{item.slug}' "
+                            f"(publikasi id {existing_draft.id}). Terbitkan draf itu "
+                            f"lewat POST /api/v1/publish/{existing_draft.id}/publish, "
+                            "jangan mengirim artikel yang sama lagi."
+                        )
+                    )
+                )
+                fail_count += 1
+                continue
+
         # Simpan rekaman publikasi ke DB
         pub_record = Publication(
             source_id=payload.source_id,
@@ -148,6 +176,131 @@ def publish_articles(
         failed=fail_count,
         results=results
     )
+
+@router.post("/{publication_id}/publish", response_model=PublicationResult)
+def publish_existing_draft(
+    publication_id: int,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(authenticate_agent_or_session)
+):
+    """
+    Menerbitkan draf yang sudah ada tanpa membuat postingan baru.
+    Memakai Blogger posts().publish() pada remote_post_id yang tersimpan,
+    jadi tidak ada duplikat di Blogger.
+    """
+    pub = db.query(Publication).filter(Publication.id == publication_id).first()
+    if not pub:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Publikasi dengan id {publication_id} tidak ditemukan."
+        )
+
+    channel = pub.channel
+    channel_name = channel.name if channel else "Unknown"
+    platform = channel.platform if channel else "unknown"
+
+    def _failed(message: str) -> PublicationResult:
+        pub.error_message = message
+        db.commit()
+        return PublicationResult(
+            channel_id=pub.channel_id,
+            channel_name=channel_name,
+            platform=platform,
+            status="failed",
+            title=pub.title,
+            remote_post_id=pub.remote_post_id,
+            remote_url=pub.remote_url,
+            error_message=message
+        )
+
+    if pub.status != "draft":
+        return _failed(
+            "Hanya draf yang bisa diterbitkan. "
+            f"Status publikasi ini adalah '{pub.status}'."
+        )
+
+    if not channel or channel.platform != "blogger":
+        return _failed(
+            f"Platform '{platform}' belum mendukung penerbitan draf."
+        )
+
+    if not pub.remote_post_id:
+        return _failed(
+            "Draf ini tidak punya remote_post_id, jadi tidak bisa "
+            "diterbitkan dari Blogger. Kirim ulang sebagai artikel baru."
+        )
+
+    driver = BloggerPlatform(channel_id=channel.id, credentials=channel.get_credentials())
+    res = driver.publish_draft(pub.remote_post_id)
+
+    if not res.success:
+        return _failed(res.error_message or "Gagal menerbitkan draf di Blogger.")
+
+    pub.status = "published"
+    pub.published_at = datetime.datetime.utcnow()
+    if res.remote_url:
+        pub.remote_url = res.remote_url
+    pub.error_message = None
+    db.commit()
+
+    return PublicationResult(
+        channel_id=pub.channel_id,
+        channel_name=channel_name,
+        platform=platform,
+        status="published",
+        title=pub.title,
+        remote_post_id=pub.remote_post_id,
+        remote_url=pub.remote_url
+    )
+
+
+@router.delete("/{publication_id}")
+def delete_publication(
+    publication_id: int,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(authenticate_agent_or_session)
+):
+    """
+    Menghapus sebuah draf: hapus postingannya di Blogger (kalau ada
+    remote_post_id) lalu hapus rekamannya di database. Hanya draf yang
+    boleh dihapus dari sini; artikel yang sudah published harus dihapus
+    langsung di Blogger supaya tidak terhapus tanpa sengaja.
+    """
+    pub = db.query(Publication).filter(Publication.id == publication_id).first()
+    if not pub:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Publikasi dengan id {publication_id} tidak ditemukan."
+        )
+
+    if pub.status != "draft":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Hanya draf yang bisa dihapus dari sini. Artikel yang sudah "
+                "published harus dihapus langsung di Blogger."
+            )
+        )
+
+    blogger_error = None
+    channel = pub.channel
+    if pub.remote_post_id and channel and channel.platform == "blogger":
+        driver = BloggerPlatform(channel_id=channel.id, credentials=channel.get_credentials())
+        res = driver.delete_post(pub.remote_post_id)
+        if not res.success:
+            # Tetap hapus rekaman DB-nya, tapi laporkan error Blogger-nya
+            # supaya admin tahu drafnya mungkin masih ada di Blogger.
+            blogger_error = res.error_message
+
+    db.delete(pub)
+    db.commit()
+
+    return {
+        "ok": True,
+        "deleted_id": publication_id,
+        "blogger_error": blogger_error,
+    }
+
 
 @router.get("/history")
 def list_publication_history(
