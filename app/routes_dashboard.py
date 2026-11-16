@@ -139,9 +139,9 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
         blog_id = ch.blog_id or creds.get("blog_id") or None
         if blog_url:
             blog_cell = (
-                f'<a href="{blog_url}" target="_blank" class="text-xs text-emerald-400 hover:underline break-all">Lihat Blog</a>'
-                f'<span class="text-xs text-slate-400 break-all"> {html_escape(blog_url)}</span>'
+                f'<a href="{blog_url}" target="_blank" class="text-xs text-emerald-400 hover:underline">Lihat Blog</a>'
                 f' <button type="button" data-url="{html_escape(blog_url, quote=True)}" onclick="copyBlogUrl(this)" class="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded border border-slate-700 transition ml-1">Salin</button>'
+                f'<div class="text-[11px] text-slate-500 break-all mt-0.5">{html_escape(blog_url)}</div>'
             )
         else:
             blog_cell = '<span class="text-xs text-slate-500">Belum diketahui — klik Test</span>'
@@ -153,20 +153,25 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
         """ if ch.platform == 'blogger' else f"""
         <button onclick="deleteChannel('{ch.id}', this)" class="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 px-2 py-1 rounded border border-red-500/30 transition">Hapus</button>
         """
+        # Tabel disederhanakan jadi 4 kolom: Channel ID, Niche, Tone of Voice
+        # dan Target Kata tidak lagi jadi kolom sendiri, melainkan teks kecil
+        # di bawah nama blog (tetap terlihat, tapi tidak memakan lebar tabel).
+        blog_sub = (
+            f'<span class="font-mono text-emerald-400">{html_escape(ch.id)}</span>'
+            f'<span class="text-slate-500"> · {html_escape(ch.niche)}</span>'
+            f'<span class="text-slate-500"> · {html_escape(ch.tone_of_voice or "-")}</span>'
+            f'<span class="text-slate-500"> · {ch.target_word_count} kata</span>'
+        )
         channel_rows += f"""
         <tr class="border-b border-slate-800/60 hover:bg-slate-800/30 transition">
-            <td class="py-3 px-3 sm:px-4 font-mono text-xs text-emerald-400">{ch.id}</td>
-            <td class="py-3 px-3 sm:px-4 font-medium text-slate-200">{ch.name}</td>
+            <td class="py-3 px-3 sm:px-4"><div class="font-medium text-slate-200">{html_escape(ch.name)}</div><div class="text-[11px] mt-0.5">{blog_sub}</div></td>
             <td class="py-3 px-3 sm:px-4"><span class="px-2 py-1 rounded text-xs font-semibold {'bg-orange-500/10 text-orange-400 border border-orange-500/30' if ch.platform == 'blogger' else 'bg-blue-500/10 text-blue-400 border border-blue-500/30'}">{ch.platform.upper()}</span></td>
-            <td class="py-3 px-3 sm:px-4 text-sm text-slate-300">{ch.niche}</td>
             <td class="py-3 px-3 sm:px-4">{blog_cell}</td>
-            <td class="py-3 px-3 sm:px-4 text-xs text-slate-400">{ch.tone_of_voice or '-'}</td>
-            <td class="py-3 px-3 sm:px-4 text-xs text-slate-400">{ch.target_word_count} kata</td>
             <td class="py-3 px-3 sm:px-4 text-right">{test_btn}</td>
         </tr>
         """
     if not channels:
-        channel_rows = """<tr><td colspan="8" class="py-8 text-center text-slate-500">Belum ada akun blog yang didaftarkan. Klik tombol "+ Tambah Akun Blog" di atas untuk menghubungkan!</td></tr>"""
+        channel_rows = """<tr><td colspan="4" class="py-8 text-center text-slate-500">Belum ada akun blog yang didaftarkan. Klik tombol "+ Tambah Akun Blog" di atas untuk menghubungkan!</td></tr>"""
 
     # Buat baris tabel publikasi. Baris di luar 15 pertama disembunyikan
     # (class pub-extra) dan dibuka lewat tombol "Muat lebih banyak".
@@ -313,13 +318,9 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     <table class="w-full text-left border-collapse">
                         <thead>
                             <tr class="border-b border-slate-800 text-xs uppercase tracking-wider text-slate-400">
-                                <th class="py-3 px-3 sm:px-4">Channel ID</th>
-                                <th class="py-3 px-3 sm:px-4">Nama Blog</th>
+                                <th class="py-3 px-3 sm:px-4">Blog</th>
                                 <th class="py-3 px-3 sm:px-4">Platform</th>
-                                <th class="py-3 px-3 sm:px-4">Niche</th>
                                 <th class="py-3 px-3 sm:px-4">Alamat Blog</th>
-                                <th class="py-3 px-3 sm:px-4">Tone of Voice</th>
-                                <th class="py-3 px-3 sm:px-4">Target Kata</th>
                                 <th class="py-3 px-3 sm:px-4 text-right">Aksi</th>
                             </tr>
                         </thead>
