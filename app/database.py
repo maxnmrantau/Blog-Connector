@@ -49,11 +49,34 @@ def get_db():
     finally:
         db.close()
 
+def _ensure_channel_blog_columns(engine):
+    """Tambah kolom blog_id/blog_url ke tabel channels yang sudah ada.
+
+    create_all() tidak mengubah tabel lama, jadi tanpa ini kolom baru di
+    models.Channel tidak akan pernah muncul di database production.
+    """
+    from sqlalchemy import inspect, text
+    try:
+        cols = {c["name"] for c in inspect(engine).get_columns("channels")}
+    except Exception:
+        return
+    missing = []
+    if "blog_id" not in cols:
+        missing.append(("blog_id", "VARCHAR(50)"))
+    if "blog_url" not in cols:
+        missing.append(("blog_url", "VARCHAR(500)"))
+    if not missing:
+        return
+    with engine.begin() as conn:
+        for name, ddl in missing:
+            conn.execute(text(f"ALTER TABLE channels ADD COLUMN {name} {ddl}"))
+
 def init_db():
     """Panggil eksplisit untuk membuat tabel dan mengikat SessionLocal ke engine."""
     engine = get_engine()
     SessionLocal.configure(bind=engine)
     Base.metadata.create_all(bind=engine)
+    _ensure_channel_blog_columns(engine)
     return engine
 
 # Untuk keperluan lokal/testing — jalankan langsung tanpa server

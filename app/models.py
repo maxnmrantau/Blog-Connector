@@ -31,6 +31,12 @@ class Channel(Base):
     name = Column(String(100), nullable=False)
     platform = Column(String(20), nullable=False)  # 'blogger' atau 'wordpress'
     
+    # Alamat blog Blogger yang sebenarnya, diisi dari credentials.blog_id
+    # dan dari Blogger API listByUser saat Test. Tanpa ini, dashboard dan
+    # API tidak pernah bisa menampilkan alamat .blogspot.com channel.
+    blog_id = Column(String(50), nullable=True)
+    blog_url = Column(String(500), nullable=True)
+
     # Kredensial disimpan dalam JSON
     credentials_json = Column(Text, nullable=False, default="{}")
 

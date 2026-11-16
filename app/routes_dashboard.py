@@ -111,6 +111,12 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
     # Buat baris tabel channel
     channel_rows = ""
     for ch in channels:
+        creds = ch.get_credentials()
+        blog_url = ch.blog_url or creds.get("blog_url") or creds.get("url") or None
+        blog_id = ch.blog_id or creds.get("blog_id") or None
+        blog_cell = f'<a href="{blog_url}" target="_blank" class="text-xs text-emerald-400 hover:underline break-all">{blog_url}</a>' if blog_url else '<span class="text-xs text-slate-500">Belum diketahui — klik Test</span>'
+        if blog_id:
+            blog_cell += f'<div class="text-[11px] text-slate-500 font-mono mt-0.5">ID: {blog_id}</div>'
         test_btn = f"""
         <button onclick="testChannel('{ch.id}')" class="text-xs bg-slate-800 hover:bg-slate-700 text-emerald-400 px-2 py-1 rounded border border-slate-700 transition">Test</button>
         <button onclick="deleteChannel('{ch.id}')" class="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 px-2 py-1 rounded border border-red-500/30 transition ml-1">Hapus</button>
@@ -123,13 +129,14 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
             <td class="py-3 px-4 font-medium text-slate-200">{ch.name}</td>
             <td class="py-3 px-4"><span class="px-2 py-1 rounded text-xs font-semibold {'bg-orange-500/10 text-orange-400 border border-orange-500/30' if ch.platform == 'blogger' else 'bg-blue-500/10 text-blue-400 border border-blue-500/30'}">{ch.platform.upper()}</span></td>
             <td class="py-3 px-4 text-sm text-slate-300">{ch.niche}</td>
+            <td class="py-3 px-4">{blog_cell}</td>
             <td class="py-3 px-4 text-xs text-slate-400">{ch.tone_of_voice or '-'}</td>
             <td class="py-3 px-4 text-xs text-slate-400">{ch.target_word_count} kata</td>
             <td class="py-3 px-4 text-right">{test_btn}</td>
         </tr>
         """
     if not channels:
-        channel_rows = """<tr><td colspan="7" class="py-8 text-center text-slate-500">Belum ada akun blog yang didaftarkan. Klik tombol "+ Tambah Akun Blog" di atas untuk menghubungkan!</td></tr>"""
+        channel_rows = """<tr><td colspan="8" class="py-8 text-center text-slate-500">Belum ada akun blog yang didaftarkan. Klik tombol "+ Tambah Akun Blog" di atas untuk menghubungkan!</td></tr>"""
 
     # Buat baris tabel publikasi
     pub_rows = ""
@@ -195,7 +202,10 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     </div>
                 </div>
 
-                <div class="flex items-center gap-4">
+                <div class="flex items-center gap-3">
+                    <a href="/oauth/blogger" class="text-xs font-semibold text-orange-400 hover:text-orange-300 px-3 py-1.5 rounded-lg border border-orange-500/30 hover:bg-orange-500/10 transition flex items-center gap-1">
+                        <span>🔑 Token Generator</span>
+                    </a>
                     <a href="/docs" target="_blank" class="text-xs font-semibold text-slate-300 hover:text-emerald-400 px-3 py-1.5 rounded-lg border border-slate-800 hover:border-slate-700 transition flex items-center gap-1.5">
                         <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
                         API Docs (Swagger)
@@ -253,6 +263,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                                 <th class="py-3 px-4">Nama Blog</th>
                                 <th class="py-3 px-4">Platform</th>
                                 <th class="py-3 px-4">Niche</th>
+                                <th class="py-3 px-4">Alamat Blog</th>
                                 <th class="py-3 px-4">Tone of Voice</th>
                                 <th class="py-3 px-4">Target Kata</th>
                                 <th class="py-3 px-4 text-right">Aksi</th>
@@ -367,12 +378,16 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
 
                     <!-- Blogger Specific Fields -->
                     <div id="bloggerFields" class="space-y-3 pt-2 border-t border-slate-800">
-                        <div class="p-3 rounded-xl bg-slate-800/50 border border-slate-700 text-slate-300 space-y-1">
-                            <p class="font-semibold text-emerald-400">💡 Butuh Kredensial Google Cloud:</p>
-                            <p>1. Aktifkan <b>Blogger API v3</b> di Google Cloud Console.</p>
-                            <p>2. Buat OAuth Client ID (Desktop app) untuk dapatkan Client ID & Secret.</p>
-                            <p>3. Dapatkan <b>Refresh Token & Blog ID</b> menggunakan script pembantu kami di terminal:</p>
-                            <code class="block bg-slate-950 p-1.5 rounded font-mono text-[11px] text-emerald-300 mt-1">.\\.venv\\Scripts\\python.exe scripts/setup_blogger_auth.py</code>
+                        <div class="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700 text-slate-300 space-y-2">
+                            <div class="flex items-center justify-between">
+                                <p class="font-semibold text-emerald-400 text-xs">✨ Cara Mudah (Tanpa Terminal):</p>
+                                <a href="/oauth/blogger" target="_blank" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1 shadow-md transition">
+                                    <span>🌐 Dapatkan Token via Web →</span>
+                                </a>
+                            </div>
+                            <p class="text-[11px] text-slate-300">
+                                Sudah punya Client ID & Secret? Klik tombol di atas untuk login Google dan sistem akan otomatis menampilkan <b>Refresh Token & Blog ID</b> Anda langsung di halaman web!
+                            </p>
                         </div>
 
                         <div>
@@ -528,7 +543,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     const res = await fetch(`/api/v1/channels/${{channelId}}/test-blogger-blogs`);
                     const data = await res.json();
                     if (res.ok) {{
-                        alert(data.message + '\\nBlog yang ditemukan: ' + data.blogs.map(b => b.name + ' (' + b.id + ')').join(', '));
+                        alert(data.message + '\\nBlog yang ditemukan: ' + data.blogs.map(b => b.name + ' (' + b.id + ') - ' + (b.url || '-')).join(', ') + (data.resolved_blog_url ? '\\nAlamat blog channel ini: ' + data.resolved_blog_url : ''));
                     }} else {{
                         alert('Gagal tes koneksi: ' + (data.detail || 'Periksa kredensial'));
                     }}

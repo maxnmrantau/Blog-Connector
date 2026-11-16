@@ -25,10 +25,17 @@ def create_or_update_channel(
     auth: dict = Depends(authenticate_agent_or_session)
 ):
     """Menambahkan akun blog baru atau memperbarui akun yang sudah ada."""
+    # Blog ID hanya ada di dalam credentials JSON, jadi simpan juga sebagai
+    # kolom agar dashboard dan API bisa menampilkannya tanpa membongkar JSON.
+    blog_id = str(data.credentials.get("blog_id")) if data.credentials.get("blog_id") else None
+    blog_url = data.credentials.get("blog_url") or data.credentials.get("url") or None
+
     existing = db.query(Channel).filter(Channel.id == data.id).first()
     if existing:
         existing.name = data.name
         existing.platform = data.platform.lower()
+        existing.blog_id = blog_id or existing.blog_id
+        existing.blog_url = blog_url or existing.blog_url
         existing.set_credentials(data.credentials)
         existing.niche = data.niche
         existing.target_audience = data.target_audience
@@ -43,6 +50,8 @@ def create_or_update_channel(
         id=data.id,
         name=data.name,
         platform=data.platform.lower(),
+        blog_id=blog_id,
+        blog_url=blog_url,
         niche=data.niche,
         target_audience=data.target_audience,
         tone_of_voice=data.tone_of_voice,
@@ -102,10 +111,22 @@ def test_blogger_blogs(
     try:
         platform = BloggerPlatform(channel_id=channel.id, credentials=creds)
         blogs = platform.list_user_blogs()
+        # list_user_blogs sudah mengembalikan url tiap blog, tapi selama ini
+        # tidak pernah disimpan. Cocokkan dengan blog_id channel lalu simpan
+        # agar dashboard dan GET /channels bisa menampilkan alamat blog.
+        target_id = str(channel.blog_id or creds.get("blog_id") or "")
+        matched = next((b for b in blogs if str(b.get("id")) == target_id), blogs[0] if blogs else None)
+        if matched:
+            if not channel.blog_id:
+                channel.blog_id = str(matched.get("id"))
+            channel.blog_url = matched.get("url")
+            db.commit()
         return {
             "status": "success",
             "message": f"Berhasil terhubung ke akun Google! Ditemukan {len(blogs)} blog.",
-            "blogs": blogs
+            "blogs": blogs,
+            "resolved_blog_id": channel.blog_id,
+            "resolved_blog_url": channel.blog_url
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

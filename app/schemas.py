@@ -18,6 +18,8 @@ class ChannelResponse(BaseModel):
     id: str
     name: str
     platform: str
+    blog_id: Optional[str] = None
+    blog_url: Optional[str] = None
     niche: str
     target_audience: Optional[str]
     tone_of_voice: Optional[str]
