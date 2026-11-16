@@ -10,8 +10,11 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False)
 def _get_database_url() -> str:
     url = os.getenv("DATABASE_URL", "")
 
+    # Standarisasi prefix: gunakan psycopg2 secara eksplisit agar SQLAlchemy 2.x tidak salah driver
     if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql://", 1)
+        url = url.replace("postgres://", "postgresql+psycopg2://", 1)
+    elif url.startswith("postgresql://") and "+psycopg" not in url:
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
     if url and ("supabase.co" in url or "supabase.com" in url):
         sep = "&" if "?" in url else "?"
