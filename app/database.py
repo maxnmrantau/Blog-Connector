@@ -105,6 +105,25 @@ def _ensure_feed_sources_table(engine):
         for name, ddl in missing:
             conn.execute(text(f"ALTER TABLE feed_sources ADD COLUMN {name} {ddl}"))
 
+def _ensure_publication_scheduled_at(engine):
+    """Tambah kolom scheduled_at ke tabel publications yang sudah ada.
+
+    create_all() tidak mengubah tabel lama, jadi tanpa ini kolom baru di
+    models.Publication tidak akan pernah muncul di database production
+    dan dashboard akan 500 (OperationalError: no such column:
+    publications.scheduled_at) karena query daftar terjadwal selalu
+    memilih kolom tersebut.
+    """
+    from sqlalchemy import inspect, text
+    try:
+        cols = {c["name"] for c in inspect(engine).get_columns("publications")}
+    except Exception:
+        return
+    if "scheduled_at" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE publications ADD COLUMN scheduled_at TIMESTAMP"))
+
 def init_db():
     """Panggil eksplisit untuk membuat tabel dan mengikat SessionLocal ke engine."""
     engine = get_engine()
@@ -112,6 +131,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     _ensure_channel_blog_columns(engine)
     _ensure_feed_sources_table(engine)
+    _ensure_publication_scheduled_at(engine)
     return engine
 
 # Untuk keperluan lokal/testing — jalankan langsung tanpa server
