@@ -4,10 +4,15 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Standarisasi URI jika Supabase memberikan format 'postgres://' (SQLAlchemy 2.0+ butuh 'postgresql://')
+# Standarisasi URI jika Supabase memberikan format 'postgres://' (SQLAlchemy butuh 'postgresql://')
 if DATABASE_URL:
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    
+    # Supabase mewajibkan SSL: pastikan parameter sslmode=require ada jika koneksi ke Supabase
+    if ("supabase.co" in DATABASE_URL or "supabase.com" in DATABASE_URL) and "sslmode" not in DATABASE_URL:
+        separator = "&" if "?" in DATABASE_URL else "?"
+        DATABASE_URL = f"{DATABASE_URL}{separator}sslmode=require"
 
 # Jika di Vercel/Serverless dan belum ada DATABASE_URL cloud, gunakan fallback /tmp
 if not DATABASE_URL:
@@ -26,13 +31,13 @@ if DATABASE_URL.startswith("sqlite") and not DATABASE_URL.startswith("sqlite:///
         except OSError:
             DATABASE_URL = "sqlite:////tmp/connector.db"
 
-# Koneksi engine (check_same_thread hanya untuk SQLite)
+# Konfigurasi koneksi
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
 engine = create_engine(
     DATABASE_URL,
     connect_args=connect_args,
-    pool_pre_ping=True  # Otomatis me-reconnect jika koneksi pooler sempat terputus
+    pool_pre_ping=True
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
