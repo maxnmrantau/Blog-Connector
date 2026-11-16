@@ -1905,7 +1905,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 const imgUrl = document.getElementById('articleImageUrl').value.trim();
                 if (imgUrl) {{
                     const imgAlt = document.getElementById('articleImageAlt').value.trim();
-                    content = '<img src="' + imgUrl.replace(/"/g, '&quot;') + '" alt="' + imgAlt.replace(/"/g, '&quot;') + '">\n' + content;
+                    content = '<img src="' + imgUrl.replace(/"/g, '&quot;') + '" alt="' + imgAlt.replace(/"/g, '&quot;') + '">' + content;
                 }}
                 const sel = document.getElementById('articleChannel');
                 const opt = sel.options[sel.selectedIndex];
