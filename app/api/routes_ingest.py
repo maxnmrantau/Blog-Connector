@@ -1,16 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
 
 from app.database import get_db
 from app.models import ArticleSource
 from app.schemas import IngestRequest, IngestResponse
 from app.services.extractor import ArticleExtractor
+from app.security import authenticate_agent_or_session
 
 router = APIRouter(prefix="/api/v1/ingest", tags=["Ingest / Ekstraksi Berita"])
 
 @router.post("", response_model=IngestResponse)
-def ingest_source(data: IngestRequest, db: Session = Depends(get_db)):
+def ingest_source(
+    data: IngestRequest,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(authenticate_agent_or_session)
+):
     """
     Menyedot isi berita/artikel dari URL web secara bersih (tanpa iklan/menu)
     atau menyimpan teks mentah yang diinput langsung.
@@ -35,7 +39,6 @@ def ingest_source(data: IngestRequest, db: Session = Depends(get_db)):
         title = extracted.get("title") or title
         raw_content = extracted.get("text") or ""
         if not data.source_name and "://" in data.url:
-            # Ambil domain sebagai nama sumber default
             domain = data.url.split("://")[1].split("/")[0].replace("www.", "")
             source_name = domain
 
@@ -59,7 +62,11 @@ def ingest_source(data: IngestRequest, db: Session = Depends(get_db)):
     )
 
 @router.get("/{source_id}")
-def get_source(source_id: int, db: Session = Depends(get_db)):
+def get_source(
+    source_id: int,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(authenticate_agent_or_session)
+):
     """Mengambil teks artikel lengkap hasil ekstraksi berdasarkan ID sumber."""
     source = db.query(ArticleSource).filter(ArticleSource.id == source_id).first()
     if not source:

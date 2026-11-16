@@ -1,6 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from app.database import init_db, get_engine, SessionLocal
+from app.database import init_db, SessionLocal
+from app.routes_dashboard import get_current_session
 
 app = FastAPI(
     title="Blog Konektor - Multi-Channel AI Content Engine",
@@ -16,7 +18,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Inisialisasi DB saat startup — aman untuk serverless cold-start
 _db_ready = False
 
 @app.on_event("startup")
@@ -24,21 +25,31 @@ def startup_event():
     global _db_ready
     try:
         engine = init_db()
-        # Ikat SessionLocal ke engine yang sudah siap
         SessionLocal.configure(bind=engine)
         _db_ready = True
         print("✅ Database initialized successfully.")
     except Exception as e:
         print(f"⚠️ Database init warning (non-fatal): {e}")
 
-from app.api import routes_channels, routes_ingest, routes_publish  # noqa: E402
+# Registrasi Router
+from app.api import routes_channels, routes_ingest, routes_publish, routes_auth
+from app import routes_dashboard
 
+app.include_router(routes_dashboard.router)
+app.include_router(routes_auth.router)
 app.include_router(routes_channels.router)
 app.include_router(routes_ingest.router)
 app.include_router(routes_publish.router)
 
 @app.get("/")
-def root():
+def root(request: Request):
+    # Jika diakses lewat browser (Accept: text/html), arahkan ke dashboard
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        if get_current_session(request):
+            return RedirectResponse(url="/dashboard", status_code=303)
+        return RedirectResponse(url="/login", status_code=303)
+
     return {
         "system": "Blog Konektor",
         "status": "online",

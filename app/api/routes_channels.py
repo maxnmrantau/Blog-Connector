@@ -6,16 +6,24 @@ from app.database import get_db
 from app.models import Channel
 from app.schemas import ChannelCreate, ChannelResponse
 from app.services.platforms.blogger import BloggerPlatform
+from app.security import authenticate_agent_or_session
 
 router = APIRouter(prefix="/api/v1/channels", tags=["Channels / Blog Accounts"])
 
 @router.get("", response_model=List[ChannelResponse])
-def list_channels(db: Session = Depends(get_db)):
+def list_channels(
+    db: Session = Depends(get_db),
+    auth: dict = Depends(authenticate_agent_or_session)
+):
     """Mengambil daftar seluruh akun blog yang terdaftar beserta profil niche-nya."""
     return db.query(Channel).all()
 
 @router.post("", response_model=ChannelResponse)
-def create_or_update_channel(data: ChannelCreate, db: Session = Depends(get_db)):
+def create_or_update_channel(
+    data: ChannelCreate,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(authenticate_agent_or_session)
+):
     """Menambahkan akun blog baru atau memperbarui akun yang sudah ada."""
     existing = db.query(Channel).filter(Channel.id == data.id).first()
     if existing:
@@ -48,7 +56,11 @@ def create_or_update_channel(data: ChannelCreate, db: Session = Depends(get_db))
     return new_channel
 
 @router.get("/{channel_id}", response_model=ChannelResponse)
-def get_channel(channel_id: str, db: Session = Depends(get_db)):
+def get_channel(
+    channel_id: str,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(authenticate_agent_or_session)
+):
     """Mendapatkan detail profil dan kredensial suatu channel."""
     channel = db.query(Channel).filter(Channel.id == channel_id).first()
     if not channel:
@@ -56,7 +68,11 @@ def get_channel(channel_id: str, db: Session = Depends(get_db)):
     return channel
 
 @router.delete("/{channel_id}")
-def delete_channel(channel_id: str, db: Session = Depends(get_db)):
+def delete_channel(
+    channel_id: str,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(authenticate_agent_or_session)
+):
     """Menghapus akun blog dari sistem."""
     channel = db.query(Channel).filter(Channel.id == channel_id).first()
     if not channel:
@@ -66,7 +82,11 @@ def delete_channel(channel_id: str, db: Session = Depends(get_db)):
     return {"status": "success", "message": f"Channel '{channel_id}' berhasil dihapus."}
 
 @router.get("/{channel_id}/test-blogger-blogs")
-def test_blogger_blogs(channel_id: str, db: Session = Depends(get_db)):
+def test_blogger_blogs(
+    channel_id: str,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(authenticate_agent_or_session)
+):
     """
     Menguji koneksi OAuth Blogger dan menampilkan seluruh blog ID
     yang bisa diakses oleh akun Google ini.

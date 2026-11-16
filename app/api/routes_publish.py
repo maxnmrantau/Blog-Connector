@@ -7,13 +7,18 @@ from app.database import get_db
 from app.models import Channel, Publication
 from app.schemas import PublishRequest, PublishBatchResponse, PublicationResult
 from app.services.platforms.blogger import BloggerPlatform
+from app.security import authenticate_agent_or_session
 
 router = APIRouter(prefix="/api/v1/publish", tags=["Publish / Distribusi Konten"])
 
 @router.post("", response_model=PublishBatchResponse)
-def publish_articles(payload: PublishRequest, db: Session = Depends(get_db)):
+def publish_articles(
+    payload: PublishRequest,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(authenticate_agent_or_session)
+):
     """
-    Endpoint utama untuk AI Agent atau User memposting artikel ke beberapa channel blog.
+    Endpoint utama untuk AI Agent memposting artikel ke beberapa channel blog.
     Dapat mengirim draf atau langsung publish.
     """
     results: List[PublicationResult] = []
@@ -105,7 +110,7 @@ def publish_articles(payload: PublishRequest, db: Session = Depends(get_db)):
                     )
                     fail_count += 1
             else:
-                err_msg = f"Platform '{channel.platform}' belum diaktifkan (Fase Blogspot aktif)."
+                err_msg = f"Platform '{channel.platform}' belum diaktifkan."
                 pub_record.status = "failed"
                 pub_record.error_message = err_msg
                 db.commit()
@@ -145,6 +150,9 @@ def publish_articles(payload: PublishRequest, db: Session = Depends(get_db)):
     )
 
 @router.get("/history")
-def list_publication_history(db: Session = Depends(get_db)):
+def list_publication_history(
+    db: Session = Depends(get_db),
+    auth: dict = Depends(authenticate_agent_or_session)
+):
     """Mengambil riwayat seluruh artikel yang pernah diposting melalui konektor."""
     return db.query(Publication).order_by(Publication.created_at.desc()).limit(100).all()

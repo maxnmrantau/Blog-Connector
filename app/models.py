@@ -1,8 +1,24 @@
 import datetime
 import json
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from app.database import Base
+
+class ApiKey(Base):
+    """
+    Menyimpan API Key untuk AI Agent / integrasi eksternal.
+    Hanya hash SHA-256 yang disimpan untuk keamanan maksimal.
+    """
+    __tablename__ = "api_keys"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False)
+    key_prefix = Column(String(16), nullable=False)  # Contoh: "bk_a1b2c3..."
+    key_hash = Column(String(64), nullable=False, unique=True, index=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+
 
 class Channel(Base):
     """
@@ -15,17 +31,15 @@ class Channel(Base):
     name = Column(String(100), nullable=False)
     platform = Column(String(20), nullable=False)  # 'blogger' atau 'wordpress'
     
-    # Kredensial disimpan dalam JSON (terenkripsi atau terstruktur)
-    # Untuk Blogger: {"client_id": "...", "client_secret": "...", "refresh_token": "...", "blog_id": "..."}
-    # Untuk WordPress: {"url": "https://...", "username": "...", "app_password": "..."}
+    # Kredensial disimpan dalam JSON
     credentials_json = Column(Text, nullable=False, default="{}")
 
     # Profil Niche & Persona AI
-    niche = Column(String(100), nullable=False)           # contoh: "Teknologi & AI"
-    target_audience = Column(String(150), nullable=True)  # contoh: "Developer & Enthusiast"
-    tone_of_voice = Column(String(100), nullable=True)    # contoh: "Edukatif, santai namun berbobot"
+    niche = Column(String(100), nullable=False)
+    target_audience = Column(String(150), nullable=True)
+    tone_of_voice = Column(String(100), nullable=True)
     target_word_count = Column(Integer, default=800)
-    default_labels = Column(String(255), nullable=True)   # Dipisah koma
+    default_labels = Column(String(255), nullable=True)
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -51,7 +65,7 @@ class ArticleSource(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     url = Column(String(500), nullable=True, index=True)
     title = Column(String(300), nullable=True)
-    source_name = Column(String(100), nullable=True)  # contoh: "Detik", "TechCrunch"
+    source_name = Column(String(100), nullable=True)
     raw_content = Column(Text, nullable=False)
     ingested_at = Column(DateTime, default=datetime.datetime.utcnow)
 
@@ -72,7 +86,7 @@ class Publication(Base):
     slug = Column(String(300), nullable=True)
     meta_description = Column(String(255), nullable=True)
     content_html = Column(Text, nullable=False)
-    labels = Column(String(255), nullable=True)  # Tags / labels dipisah koma
+    labels = Column(String(255), nullable=True)
 
     status = Column(String(20), default="draft")  # 'draft', 'published', 'failed', 'scheduled'
     remote_post_id = Column(String(100), nullable=True)
