@@ -4,7 +4,7 @@ from typing import List
 
 from app.database import get_db
 from app.models import Channel
-from app.schemas import ChannelCreate, ChannelResponse
+from app.schemas import ChannelCreate, ChannelResponse, ChannelUpdate
 from app.services.platforms.blogger import BloggerPlatform
 from app.security import authenticate_agent_or_session
 
@@ -74,6 +74,29 @@ def get_channel(
     channel = db.query(Channel).filter(Channel.id == channel_id).first()
     if not channel:
         raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' tidak ditemukan.")
+    return channel
+
+@router.patch("/{channel_id}", response_model=ChannelResponse)
+def update_channel_settings(
+    channel_id: str,
+    data: ChannelUpdate,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(authenticate_agent_or_session)
+):
+    """
+    Memperbarui pengaturan artikel sebuah channel (niche, tone of voice,
+    target kata, labels default). Partial update: hanya field yang dikirim
+    yang diubah. target_word_count harus bilangan > 0 (422 bila tidak valid).
+    """
+    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    if not channel:
+        raise HTTPException(status_code=404, detail=f"Channel '{channel_id}' tidak ditemukan.")
+
+    updates = data.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(channel, field, value)
+    db.commit()
+    db.refresh(channel)
     return channel
 
 @router.delete("/{channel_id}")

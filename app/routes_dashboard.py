@@ -148,10 +148,25 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
             blog_cell = '<span class="text-xs text-slate-500">Belum diketahui — klik Test</span>'
         if blog_id:
             blog_cell += f'<div class="text-[11px] text-slate-500 font-mono mt-0.5">ID: {blog_id}</div>'
+        # Tombol Pengaturan: membuka modal edit niche/tone/target kata/labels
+        # untuk channel ini. Nilai dibawa lewat data-* (di-escape) supaya
+        # modal bisa diisi tanpa request tambahan.
+        settings_btn = (
+            f'<button type="button" onclick="openChannelSettings(this)" '
+            f'data-id="{html_escape(ch.id, quote=True)}" '
+            f'data-name="{html_escape(ch.name, quote=True)}" '
+            f'data-niche="{html_escape(ch.niche or "", quote=True)}" '
+            f'data-tone="{html_escape(ch.tone_of_voice or "", quote=True)}" '
+            f'data-words="{ch.target_word_count}" '
+            f'data-labels="{html_escape(ch.default_labels or "", quote=True)}" '
+            f'class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded border border-slate-700 transition">Pengaturan</button>'
+        )
         test_btn = f"""
+        {settings_btn}
         <button onclick="testChannel('{ch.id}', this)" class="text-xs bg-slate-800 hover:bg-slate-700 text-emerald-400 px-2 py-1 rounded border border-slate-700 transition">Test</button>
         <button onclick="deleteChannel('{ch.id}', this)" class="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 px-2 py-1 rounded border border-red-500/30 transition ml-1">Hapus</button>
         """ if ch.platform == 'blogger' else f"""
+        {settings_btn}
         <button onclick="deleteChannel('{ch.id}', this)" class="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 px-2 py-1 rounded border border-red-500/30 transition">Hapus</button>
         """
         # Tabel disederhanakan jadi 4 kolom: Channel ID, Niche, Tone of Voice
@@ -217,6 +232,30 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
         f'<option value="{html_escape(ch.id, quote=True)}">{html_escape(ch.name)} ({html_escape(ch.id)})</option>'
         for ch in blogger_channels
     )
+
+    # Opsi dropdown channel untuk form Tulis Artikel (semua channel;
+    # channel blogger pertama terpilih sebagai default).
+    first_blogger_id = blogger_channels[0].id if blogger_channels else None
+    article_channel_options = ""
+    for ch in channels:
+        sel = " selected" if ch.id == first_blogger_id else ""
+        article_channel_options += (
+            f'<option value="{html_escape(ch.id, quote=True)}"{sel}>'
+            f'{html_escape(ch.name)} ({html_escape(ch.id)})</option>'
+        )
+    if not channels:
+        article_channel_options = '<option value="">Belum ada channel — tambahkan dulu</option>'
+
+    # Ringkasan artikel terbaru untuk section Dashboard.
+    if publications:
+        lp = publications[0]
+        lp_date = lp.created_at.strftime('%d/%m/%Y %H:%M') if lp.created_at else '-'
+        latest_pub_html = (
+            f'<div class="text-sm text-slate-200 font-medium">{html_escape(lp.title or "")}</div>'
+            f'<div class="text-xs text-slate-500 mt-1">{html_escape(lp.channel_id)} · {html_escape(lp.status)} · {lp_date}</div>'
+        )
+    else:
+        latest_pub_html = '<div class="text-sm text-slate-500">Belum ada artikel.</div>'
 
     # Buat baris tabel publikasi. Baris di luar 15 pertama disembunyikan
     # (class pub-extra) dan dibuka lewat tombol "Muat lebih banyak".
@@ -287,17 +326,41 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
         </script>
     </head>
     <body class="bg-slate-950 text-slate-100 min-h-screen antialiased">
-        <!-- Top Navbar -->
-        <header class="border-b border-slate-800/80 bg-slate-900/50 backdrop-blur-xl sticky top-0 z-50">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"></path></svg>
-                    </div>
-                    <div>
-                        <span class="text-base font-bold text-white">Blog Konektor</span>
-                        <span class="text-xs text-slate-400 block -mt-0.5">Control Panel</span>
-                    </div>
+        <!-- Sidebar: tetap di kiri (desktop), off-canvas di HP -->
+        <div id="sidebarBackdrop" onclick="toggleSidebar(false)" class="hidden fixed inset-0 bg-black/70 z-40 lg:hidden"></div>
+        <aside id="sidebar" class="fixed inset-y-0 left-0 w-64 bg-slate-900 border-r border-slate-800 z-50 transform -translate-x-full lg:translate-x-0 transition-transform flex flex-col">
+            <div class="h-16 flex items-center gap-3 px-5 border-b border-slate-800 shrink-0">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20 shrink-0">
+                    <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"></path></svg>
+                </div>
+                <div class="min-w-0">
+                    <span class="text-base font-bold text-white block leading-tight">Blog Konektor</span>
+                    <span class="text-xs text-slate-400 block leading-tight">Control Panel</span>
+                </div>
+                <button onclick="toggleSidebar(false)" class="lg:hidden ml-auto text-slate-400 hover:text-white text-lg leading-none">✕</button>
+            </div>
+            <nav id="sidebarNav" class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+                <button type="button" data-section="dashboard" onclick="showSection('dashboard')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">📊 Dashboard</button>
+                <button type="button" data-section="channel" onclick="showSection('channel')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">🔗 Channel</button>
+                <button type="button" data-section="artikel" onclick="showSection('artikel')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">✍️ Artikel</button>
+                <button type="button" data-section="halaman" onclick="showSection('halaman')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">📄 Halaman</button>
+                <button type="button" data-section="riwayat" onclick="showSection('riwayat')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">🕘 Riwayat</button>
+                <button type="button" data-section="ingest" onclick="showSection('ingest')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">📥 Ingest</button>
+                <button type="button" data-section="apikey" onclick="showSection('apikey')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">🔑 API Key</button>
+            </nav>
+            <div class="p-4 border-t border-slate-800 text-xs text-slate-500">
+                Blog Konektor v1.0.0<br>Multi-Channel AI Content Engine
+            </div>
+        </aside>
+
+        <!-- Area utama -->
+        <div class="lg:pl-64 min-h-screen flex flex-col">
+        <!-- Topbar -->
+        <header class="border-b border-slate-800/80 bg-slate-900/50 backdrop-blur-xl sticky top-0 z-30">
+            <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
+                <div class="flex items-center gap-3 min-w-0">
+                    <button onclick="toggleSidebar(true)" class="lg:hidden text-slate-300 hover:text-white text-xl leading-none px-1">☰</button>
+                    <span id="topbarTitle" class="text-base font-bold text-white truncate">Dashboard</span>
                 </div>
 
                 <div class="flex items-center gap-3 flex-wrap justify-end">
@@ -316,7 +379,9 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
         </header>
 
         <!-- Main Content -->
-        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        <main class="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <!-- Section: Dashboard (statistik + ringkasan) -->
+            <section id="section-dashboard" class="nav-section space-y-6">
             <!-- Stat Cards -->
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-5">
                 <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 relative overflow-hidden">
@@ -346,6 +411,69 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 </div>
             </div>
 
+            <!-- Ringkasan -->
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <h2 class="text-lg font-bold text-white mb-1">Ringkasan</h2>
+                <p class="text-xs text-slate-400 mb-4">{len(channels)} blog terhubung · {total_published} artikel published · {total_drafts} draf menunggu</p>
+                <div class="border-t border-slate-800 pt-4">
+                    <div class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Artikel Terbaru</div>
+                    {latest_pub_html}
+                </div>
+                <div class="flex flex-wrap gap-2 mt-5">
+                    <button onclick="showSection('artikel')" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">✍️ Tulis Artikel</button>
+                    <button onclick="showSection('channel')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-4 py-2 rounded-xl text-xs transition border border-slate-700">Lihat Channel</button>
+                </div>
+            </div>
+            </section>
+
+            <!-- Section: Artikel (Tulis Artikel) -->
+            <section id="section-artikel" class="nav-section space-y-6 hidden">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="mb-4">
+                    <h2 class="text-lg font-bold text-white">Tulis Artikel</h2>
+                    <p class="text-xs text-slate-400">Tulis artikel baru lalu simpan sebagai draf atau langsung terbitkan ke blog</p>
+                </div>
+                <form id="articleForm" onsubmit="event.preventDefault();" class="space-y-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Blog</label>
+                            <select id="articleChannel" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                {article_channel_options}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Judul Artikel</label>
+                            <input type="text" id="articleTitle" required placeholder="misal: 10 Ide Kerajinan dari Barang Bekas" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Slug (opsional)</label>
+                            <input type="text" id="articleSlug" placeholder="misal: 10-ide-kerajinan-barang-bekas" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Labels (pisah koma)</label>
+                            <input type="text" id="articleLabels" placeholder="misal: diart, kerajinan, diy" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Meta Description (SEO)</label>
+                        <input type="text" id="articleMeta" maxlength="160" placeholder="Ringkasan singkat 140-160 karakter untuk SEO" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Konten HTML</label>
+                        <textarea id="articleContent" required rows="10" placeholder="Tulis konten artikel dalam HTML, misal: &lt;h2&gt;Pendahuluan&lt;/h2&gt;&lt;p&gt;...&lt;/p&gt;" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"></textarea>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" onclick="handleWriteArticle('draft', this)" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-4 py-2 rounded-xl text-xs transition border border-slate-700">Simpan sebagai Draf</button>
+                        <button type="button" onclick="handleWriteArticle('publish', this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Terbitkan</button>
+                    </div>
+                </form>
+            </div>
+            </section>
+
+            <!-- Section: Channel -->
+            <section id="section-channel" class="nav-section space-y-6 hidden">
             <!-- Channels Section -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
@@ -375,7 +503,10 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     </table>
                 </div>
             </div>
+            </section>
 
+            <!-- Section: Halaman -->
+            <section id="section-halaman" class="nav-section space-y-6 hidden">
             <!-- Halaman Statis (Pages) -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="mb-4">
@@ -422,7 +553,10 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     </div>
                 </form>
             </div>
+            </section>
 
+            <!-- Section: API Key -->
+            <section id="section-apikey" class="nav-section space-y-6 hidden">
             <!-- AI Agent Key Management -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
@@ -453,7 +587,10 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     </table>
                 </div>
             </div>
+            </section>
 
+            <!-- Section: Riwayat -->
+            <section id="section-riwayat" class="nav-section space-y-6 hidden">
             <!-- Recent Publications -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="mb-4">
@@ -493,7 +630,25 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     <button id="loadMorePubs" type="button" onclick="showMorePubs()" class="text-xs font-semibold text-emerald-400 hover:text-emerald-300 px-4 py-2 rounded-xl border border-emerald-500/30 hover:bg-emerald-500/10 transition">Muat lebih banyak</button>
                 </div>
             </div>
+            </section>
+
+            <!-- Section: Ingest (placeholder — UI ingest menyusul) -->
+            <section id="section-ingest" class="nav-section space-y-6 hidden">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="mb-4">
+                    <h2 class="text-lg font-bold text-white">Ingest — Ambil Artikel dari Web / RSS</h2>
+                    <p class="text-xs text-slate-400">Fitur ingest tersedia lewat API; UI ingest menyusul.</p>
+                </div>
+                <div class="p-4 rounded-xl bg-slate-800/60 border border-slate-700 text-sm text-slate-300 space-y-2">
+                    <p>Ambil isi artikel dari URL web atau teks mentah lewat endpoint:</p>
+                    <p><code class="bg-slate-800 text-emerald-400 px-1.5 py-0.5 rounded font-mono text-xs">POST /api/v1/ingest</code> — body <code class="bg-slate-800 text-emerald-400 px-1.5 py-0.5 rounded font-mono text-xs">{{"url": "..."}}</code> atau <code class="bg-slate-800 text-emerald-400 px-1.5 py-0.5 rounded font-mono text-xs">{{"raw_text": "..."}}</code></p>
+                    <p><code class="bg-slate-800 text-emerald-400 px-1.5 py-0.5 rounded font-mono text-xs">GET /api/v1/ingest/{{source_id}}</code> — ambil teks hasil ekstraksi berdasarkan ID sumber</p>
+                    <p class="text-xs text-slate-500">Dukungan RSS feed dan form ingest di dashboard akan ditambahkan pada tahap berikutnya.</p>
+                </div>
+            </div>
+            </section>
         </main>
+        </div>
 
         <!-- Toast notifications (pojok kanan atas) -->
         <div id="toastContainer" class="fixed top-4 right-4 z-[100] space-y-2 w-80 max-w-[calc(100vw-2rem)]"></div>
@@ -612,6 +767,41 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
                         <button type="button" onclick="document.getElementById('addChannelModal').classList.add('hidden')" class="px-4 py-2 rounded-xl font-semibold text-slate-400 hover:bg-slate-800">Batal</button>
                         <button type="submit" id="saveChannelBtn" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-5 py-2 rounded-xl shadow-lg shadow-emerald-500/20">Simpan Akun Blog</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal Pengaturan Channel (pengaturan artikel per channel) -->
+        <div id="channelSettingsModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full shadow-2xl my-8">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-bold text-white">Pengaturan Artikel — <span id="settingsChannelName" class="text-emerald-400"></span></h3>
+                    <button onclick="document.getElementById('channelSettingsModal').classList.add('hidden')" class="text-slate-400 hover:text-white">✕</button>
+                </div>
+                <form id="channelSettingsForm" onsubmit="handleSaveChannelSettings(event)" class="space-y-4 text-xs">
+                    <input type="hidden" id="settingsChannelId">
+                    <div>
+                        <label class="block font-semibold uppercase tracking-wider text-slate-400 mb-1">Niche Blog</label>
+                        <input type="text" id="settingsNiche" required placeholder="misal: diart" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:ring-2 focus:ring-emerald-500">
+                    </div>
+                    <div>
+                        <label class="block font-semibold uppercase tracking-wider text-slate-400 mb-1">Tone of Voice (Gaya)</label>
+                        <input type="text" id="settingsTone" placeholder="misal: Santai" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:ring-2 focus:ring-emerald-500">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-semibold uppercase tracking-wider text-slate-400 mb-1">Target Kata</label>
+                            <input type="number" id="settingsWords" min="1" placeholder="misal: 800" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                        <div>
+                            <label class="block font-semibold uppercase tracking-wider text-slate-400 mb-1">Labels Default (pisah koma)</label>
+                            <input type="text" id="settingsLabels" placeholder="misal: diart, catatan" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
+                        <button type="button" onclick="document.getElementById('channelSettingsModal').classList.add('hidden')" class="px-4 py-2 rounded-xl font-semibold text-slate-400 hover:bg-slate-800">Batal</button>
+                        <button type="submit" id="saveChannelSettingsBtn" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-5 py-2 rounded-xl shadow-lg shadow-emerald-500/20">Simpan Pengaturan</button>
                     </div>
                 </form>
             </div>
@@ -1005,8 +1195,125 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 }}
             }}
 
+            // --- Navigasi sidebar (tampilkan satu section saja) ---
+            const SECTION_TITLES = {{dashboard: 'Dashboard', channel: 'Channel', artikel: 'Artikel', halaman: 'Halaman', riwayat: 'Riwayat', ingest: 'Ingest', apikey: 'API Key'}};
+            function showSection(name) {{
+                document.querySelectorAll('.nav-section').forEach((s) => s.classList.add('hidden'));
+                const target = document.getElementById('section-' + name);
+                if (target) target.classList.remove('hidden');
+                document.querySelectorAll('#sidebarNav .nav-item').forEach((b) => {{
+                    const active = b.dataset.section === name;
+                    b.className = 'nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 ' + (active ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent');
+                }});
+                const title = document.getElementById('topbarTitle');
+                if (title) title.innerText = SECTION_TITLES[name] || 'Dashboard';
+                try {{ localStorage.setItem('bk_section', name); }} catch (e) {{}}
+                toggleSidebar(false);
+                window.scrollTo(0, 0);
+            }}
+            function toggleSidebar(open) {{
+                const sb = document.getElementById('sidebar');
+                const bd = document.getElementById('sidebarBackdrop');
+                if (!sb) return;
+                if (open) {{
+                    sb.classList.remove('-translate-x-full');
+                    if (bd) bd.classList.remove('hidden');
+                }} else {{
+                    if (window.innerWidth < 1024) sb.classList.add('-translate-x-full');
+                    if (bd) bd.classList.add('hidden');
+                }}
+            }}
+
+            // --- Pengaturan artikel per channel ---
+            function openChannelSettings(btn) {{
+                document.getElementById('settingsChannelId').value = btn.dataset.id || '';
+                document.getElementById('settingsChannelName').innerText = btn.dataset.name || btn.dataset.id || '';
+                document.getElementById('settingsNiche').value = btn.dataset.niche || '';
+                document.getElementById('settingsTone').value = btn.dataset.tone || '';
+                document.getElementById('settingsWords').value = btn.dataset.words || '';
+                document.getElementById('settingsLabels').value = btn.dataset.labels || '';
+                document.getElementById('channelSettingsModal').classList.remove('hidden');
+            }}
+            async function handleSaveChannelSettings(e) {{
+                e.preventDefault();
+                const channelId = document.getElementById('settingsChannelId').value;
+                const payload = {{}};
+                const niche = document.getElementById('settingsNiche').value.trim();
+                if (niche) payload.niche = niche;
+                const tone = document.getElementById('settingsTone').value.trim();
+                if (tone) payload.tone_of_voice = tone;
+                const words = parseInt(document.getElementById('settingsWords').value, 10);
+                if (!isNaN(words)) payload.target_word_count = words;
+                const labels = document.getElementById('settingsLabels').value.trim();
+                if (labels) payload.default_labels = labels;
+                const btn = document.getElementById('saveChannelSettingsBtn');
+                setBtnLoading(btn, true, 'Menyimpan…');
+                try {{
+                    const res = await fetch(`/api/v1/channels/${{encodeURIComponent(channelId)}}`, {{
+                        method: 'PATCH',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify(payload)
+                    }});
+                    const data = await res.json();
+                    if (res.ok) {{
+                        showToast('Pengaturan artikel berhasil disimpan.');
+                        setTimeout(() => window.location.reload(), 800);
+                    }} else {{
+                        showToast('Gagal: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            // --- Tulis Artikel (pakai endpoint publish yang sudah ada) ---
+            async function handleWriteArticle(status, btn) {{
+                const channelId = document.getElementById('articleChannel').value;
+                const title = document.getElementById('articleTitle').value.trim();
+                const content = document.getElementById('articleContent').value.trim();
+                if (!channelId || !title || !content) {{
+                    showToast('Isi dulu blog, judul, dan konten artikelnya.', 'error');
+                    return;
+                }}
+                const slug = document.getElementById('articleSlug').value.trim();
+                const meta = document.getElementById('articleMeta').value.trim();
+                const labels = document.getElementById('articleLabels').value.split(',').map((s) => s.trim()).filter(Boolean);
+                const item = {{channel_id: channelId, title: title, content_html: content, status: status, labels: labels}};
+                if (slug) item.slug = slug;
+                if (meta) item.meta_description = meta;
+                setBtnLoading(btn, true, status === 'publish' ? 'Menerbitkan…' : 'Menyimpan…');
+                try {{
+                    const res = await fetch('/api/v1/publish', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{publications: [item]}})
+                    }});
+                    const data = await res.json();
+                    const result = (data.results || [])[0];
+                    if (res.ok && result && (result.status === 'draft' || result.status === 'published')) {{
+                        showToast(status === 'publish' ? 'Artikel berhasil diterbitkan.' + (result.remote_url ? ' ' + result.remote_url : '') : 'Artikel berhasil disimpan sebagai draf.');
+                        setTimeout(() => window.location.reload(), 1000);
+                    }} else {{
+                        showToast('Gagal: ' + ((result && result.error_message) || data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
             // Sembunyikan tombol "Muat lebih banyak" kalau tidak ada baris tersembunyi.
             updateLoadMoreBtn();
+            // Buka section terakhir yang dipilih (default: dashboard).
+            (function () {{
+                let saved = 'dashboard';
+                try {{ saved = localStorage.getItem('bk_section') || 'dashboard'; }} catch (e) {{}}
+                if (!document.getElementById('section-' + saved)) saved = 'dashboard';
+                showSection(saved);
+            }})();
         </script>
     </body>
     </html>

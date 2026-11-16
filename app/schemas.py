@@ -14,6 +14,14 @@ class ChannelCreate(BaseModel):
     target_word_count: Optional[int] = Field(800, description="Target jumlah kata")
     default_labels: Optional[str] = Field(None, description="Label default dipisah koma")
 
+class ChannelUpdate(BaseModel):
+    """Partial update pengaturan artikel sebuah channel (hanya field yang dikirim yang diubah)."""
+    niche: Optional[str] = None
+    tone_of_voice: Optional[str] = None
+    target_word_count: Optional[int] = Field(default=None, gt=0)
+    default_labels: Optional[str] = None
+
+
 class ChannelResponse(BaseModel):
     id: str
     name: str
