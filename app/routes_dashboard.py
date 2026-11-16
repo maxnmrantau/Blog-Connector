@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Channel, Publication, ApiKey
+from app.services.platforms.blogger import BloggerPlatform
 from app.security import (
     verify_admin_password,
     create_session_token,
@@ -173,6 +174,50 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
     if not channels:
         channel_rows = """<tr><td colspan="4" class="py-8 text-center text-slate-500">Belum ada akun blog yang didaftarkan. Klik tombol "+ Tambah Akun Blog" di atas untuk menghubungkan!</td></tr>"""
 
+    # Buat baris tabel halaman statis (Pages) per channel Blogger.
+    # Pages dibaca live dari Blogger; kalau gagal dimuat, tampilkan
+    # baris "Gagal memuat halaman" dan lanjutkan render, jangan 500.
+    blogger_channels = [ch for ch in channels if ch.platform == 'blogger']
+    page_rows = ""
+    for ch in blogger_channels:
+        try:
+            page_driver = BloggerPlatform(channel_id=ch.id, credentials=ch.get_credentials())
+            pages = page_driver.list_pages()
+        except Exception:
+            pages = None
+        page_rows += f"""
+        <tr class="border-b border-slate-800/60">
+            <td colspan="3" class="py-2 px-3 sm:px-4 text-xs font-semibold text-slate-400">📄 {html_escape(ch.name)} <span class="font-mono text-emerald-400">{html_escape(ch.id)}</span></td>
+        </tr>
+        """
+        if pages is None:
+            page_rows += """<tr class="border-b border-slate-800/60"><td colspan="3" class="py-3 px-3 sm:px-4 text-xs text-amber-400">Gagal memuat halaman — coba lagi nanti atau klik Test pada channel di atas.</td></tr>"""
+        elif not pages:
+            page_rows += """<tr class="border-b border-slate-800/60"><td colspan="3" class="py-3 px-3 sm:px-4 text-xs text-slate-500">Belum ada halaman statis.</td></tr>"""
+        else:
+            for pg in pages:
+                is_live = (pg.get("status") or "").upper() == "LIVE"
+                page_status_badge = '<span class="px-2 py-0.5 rounded text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">LIVE</span>' if is_live else '<span class="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-400 border border-amber-500/30">Draf</span>'
+                page_link_btn = f'<a href="{html_escape(pg.get("url") or "", quote=True)}" target="_blank" class="text-xs text-emerald-400 hover:underline">Buka Link →</a>' if pg.get("url") else '<span class="text-xs text-slate-500">-</span>'
+                page_rows += f"""
+        <tr class="border-b border-slate-800/60 hover:bg-slate-800/30 transition">
+            <td class="py-3 px-3 sm:px-4 text-sm font-medium text-slate-200">{html_escape(pg.get("title") or '(tanpa judul)')}</td>
+            <td class="py-3 px-3 sm:px-4">{page_status_badge}</td>
+            <td class="py-3 px-3 sm:px-4 text-right">
+                <div class="flex gap-2 justify-end items-center">{page_link_btn}
+                <button onclick="deletePage('{html_escape(ch.id, quote=True)}', '{html_escape(str(pg.get('id') or ''), quote=True)}', this)" class="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 px-2 py-1 rounded border border-red-500/30 transition">Hapus</button></div>
+            </td>
+        </tr>
+        """
+    if not blogger_channels:
+        page_rows = """<tr><td colspan="3" class="py-8 text-center text-slate-500">Belum ada blog Blogger yang terhubung. Tambahkan akun blog dulu di atas.</td></tr>"""
+
+    # Opsi dropdown channel untuk form tambah halaman
+    page_channel_options = "".join(
+        f'<option value="{html_escape(ch.id, quote=True)}">{html_escape(ch.name)} ({html_escape(ch.id)})</option>'
+        for ch in blogger_channels
+    )
+
     # Buat baris tabel publikasi. Baris di luar 15 pertama disembunyikan
     # (class pub-extra) dan dibuka lewat tombol "Muat lebih banyak".
     pub_rows = ""
@@ -329,6 +374,53 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                         </tbody>
                     </table>
                 </div>
+            </div>
+
+            <!-- Halaman Statis (Pages) -->
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="mb-4">
+                    <h2 class="text-lg font-bold text-white">Halaman Statis</h2>
+                    <p class="text-xs text-slate-400">Halaman Tentang, Kontak, dan Kebijakan Privasi di Blogger — dibaca langsung dari Blogger</p>
+                </div>
+
+                <div class="overflow-x-auto mb-6">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-xs uppercase tracking-wider text-slate-400">
+                                <th class="py-3 px-3 sm:px-4">Judul</th>
+                                <th class="py-3 px-3 sm:px-4">Status</th>
+                                <th class="py-3 px-3 sm:px-4 text-right">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {page_rows}
+                        </tbody>
+                    </table>
+                </div>
+
+                <form id="pageForm" onsubmit="event.preventDefault();" class="space-y-3 border-t border-slate-800 pt-5">
+                    <h3 class="text-sm font-bold text-white">Tambah Halaman</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Blog</label>
+                            <select id="pageChannel" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                {page_channel_options}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Judul Halaman</label>
+                            <input type="text" id="pageTitle" required placeholder="misal: Tentang" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Konten HTML</label>
+                        <textarea id="pageContent" required rows="5" placeholder="Tulis konten halaman dalam HTML, misal: &lt;h2&gt;Tentang&lt;/h2&gt;&lt;p&gt;...&lt;/p&gt;" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"></textarea>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" id="savePageDraftBtn" onclick="handleCreatePage('draft', this)" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-4 py-2 rounded-xl text-xs transition border border-slate-700">Simpan sebagai Draf</button>
+                        <button type="button" id="publishPageBtn" onclick="handleCreatePage('publish', this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Terbitkan</button>
+                    </div>
+                </form>
             </div>
 
             <!-- AI Agent Key Management -->
@@ -806,6 +898,55 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                         setTimeout(() => window.location.reload(), 800);
                     }} else {{
                         showToast('Gagal menghapus draf: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            async function handleCreatePage(status, btn) {{
+                const channelId = document.getElementById('pageChannel').value;
+                const title = document.getElementById('pageTitle').value.trim();
+                const content = document.getElementById('pageContent').value.trim();
+                if (!channelId || !title || !content) {{
+                    showToast('Isi dulu blog, judul, dan konten halamannya.', 'error');
+                    return;
+                }}
+                setBtnLoading(btn, true, status === 'publish' ? 'Menerbitkan…' : 'Menyimpan…');
+                try {{
+                    const res = await fetch('/api/v1/pages', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ channel_id: channelId, title: title, content_html: content, status: status }})
+                    }});
+                    const data = await res.json();
+                    if (res.ok && data.ok) {{
+                        showToast(status === 'publish' ? 'Halaman berhasil diterbitkan.' + (data.url ? ' ' + data.url : '') : 'Halaman berhasil disimpan sebagai draf.');
+                        setTimeout(() => window.location.reload(), 1000);
+                    }} else {{
+                        showToast('Gagal: ' + (data.error || data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            async function deletePage(channelId, pageId, btn) {{
+                const ok = await askConfirm('Hapus halaman?', 'Halaman ini akan dihapus dari Blogger. Tindakan ini tidak bisa dibatalkan.');
+                if (!ok) return;
+                setBtnLoading(btn, true, 'Menghapus…');
+                try {{
+                    const res = await fetch(`/api/v1/pages/${{encodeURIComponent(pageId)}}?channel_id=${{encodeURIComponent(channelId)}}`, {{ method: 'DELETE' }});
+                    const data = await res.json();
+                    if (res.ok && data.ok) {{
+                        showToast('Halaman berhasil dihapus.');
+                        setTimeout(() => window.location.reload(), 800);
+                    }} else {{
+                        showToast('Gagal menghapus halaman: ' + (data.detail || 'Terjadi kesalahan'), 'error');
                     }}
                 }} catch (err) {{
                     showToast('Error: ' + err, 'error');

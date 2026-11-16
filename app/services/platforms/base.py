@@ -41,3 +41,31 @@ class BaseBlogPlatform(ABC):
         Menghapus sebuah postingan dari platform target.
         """
         pass
+
+    @abstractmethod
+    def create_page(
+        self,
+        title: str,
+        content_html: str,
+        is_draft: bool = True
+    ) -> PublishResult:
+        """
+        Membuat halaman statis (Page) di platform target, sebagai
+        draf atau langsung diterbitkan.
+        """
+        pass
+
+    @abstractmethod
+    def list_pages(self) -> List[Dict[str, Any]]:
+        """
+        Mengambil daftar halaman statis (Page) dari platform target.
+        Tiap item: {"id", "title", "status", "url", "updated"}.
+        """
+        pass
+
+    @abstractmethod
+    def delete_page(self, page_id: str) -> PublishResult:
+        """
+        Menghapus sebuah halaman statis (Page) dari platform target.
+        """
+        pass
