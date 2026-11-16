@@ -4,7 +4,12 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Jika di Vercel/Serverless dan belum ada DATABASE_URL cloud, gunakan /tmp (folder satu-satunya yang bisa ditulisi di Vercel)
+# Standarisasi URI jika Supabase memberikan format 'postgres://' (SQLAlchemy 2.0+ butuh 'postgresql://')
+if DATABASE_URL:
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# Jika di Vercel/Serverless dan belum ada DATABASE_URL cloud, gunakan fallback /tmp
 if not DATABASE_URL:
     if os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
         DATABASE_URL = "sqlite:////tmp/connector.db"
@@ -19,12 +24,15 @@ if DATABASE_URL.startswith("sqlite") and not DATABASE_URL.startswith("sqlite:///
         try:
             os.makedirs(db_dir, exist_ok=True)
         except OSError:
-            # Fallback jika filesystem berstatus read-only (seperti di Vercel / AWS Lambda)
             DATABASE_URL = "sqlite:////tmp/connector.db"
+
+# Koneksi engine (check_same_thread hanya untuk SQLite)
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+    connect_args=connect_args,
+    pool_pre_ping=True  # Otomatis me-reconnect jika koneksi pooler sempat terputus
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
