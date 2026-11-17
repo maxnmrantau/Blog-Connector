@@ -1,8 +1,8 @@
 """Auto-Rewrite: tulis ulang artikel sumber menjadi artikel baru yang
-orisinal memakai Google Gemini API (REST, httpx).
+orisinal memakai provider AI aktif (Gemini atau OpenAI, REST, httpx).
 
 Keamanan & kualitas:
-- Kunci Gemini diambil dari tabel settings (Pengaturan AI), TIDAK PERNAH
+- Kunci AI diambil dari tabel settings (Pengaturan AI), TIDAK PERNAH
   ditulis ke log dan tidak pernah dikirim ke klien.
 - Hasil rewrite SELALU disimpan sebagai draf — tidak pernah auto-publish.
 - Rasio kemiripan dengan sumber dihitung (difflib); bila terlalu mirip,
@@ -81,7 +81,9 @@ def generate_text(api_key, prompt, model=DEFAULT_MODEL,
     try:
         resp = client.post(url, headers=headers, json=payload)
     except httpx.RequestError as e:
-        raise GeminiError(f"Tidak dapat menghubungi Gemini API: {e}")
+        raise GeminiError(
+            f"Tidak dapat menghubungi Gemini API: {type(e).__name__}: {e}"
+        )
     finally:
         if own_client:
             client.close()
@@ -109,6 +111,144 @@ def generate_text(api_key, prompt, model=DEFAULT_MODEL,
     if not text:
         raise GeminiError("Gemini mengembalikan respons kosong (tidak ada teks).")
     return text
+
+
+OPENAI_BASE_URL = "https://api.openai.com"
+# Model OpenAI default: gpt-4o-mini ($0,15/1 jt token input, $0,60/1 jt
+# output). TIDAK ADA model "gpt-4o-nano" — yang ada gpt-4.1-nano
+# ($0,10/$0,40) dan gpt-5-nano ($0,05/$0,40). Bisa diubah lewat
+# setting "openai_model" di Pengaturan AI. OpenAI BERBAYAR dari token
+# pertama (tidak ada free tier) — butuh saldo/billing di platform.openai.com.
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+
+
+class OpenAIError(Exception):
+    """Kegagalan memanggil OpenAI API (jaringan, kunci salah, saldo, dll)."""
+
+    def __init__(self, message, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _is_reasoning_model(model):
+    """True untuk model reasoning OpenAI (keluarga gpt-5, o1, o3).
+
+    Model reasoning tidak menerima temperature selain 1 dan tidak
+    menerima parameter max_tokens (pakai max_completion_tokens).
+    """
+    m = (model or "").strip().lower()
+    return m.startswith("gpt-5") or m.startswith("o1") or m.startswith("o3")
+
+
+def generate_text_openai(api_key, prompt, model=DEFAULT_OPENAI_MODEL,
+                         temperature=0.7, max_output_tokens=8192,
+                         http_client=None):
+    """Panggil OpenAI Chat Completions (REST) dan kembalikan teks hasilnya.
+
+    http_client hanya dipakai tes (mock) — bila None, dibuatkan
+    httpx.Client baru dengan timeout 120 detik. Kunci TIDAK PERNAH
+    ditulis ke log (hanya dikirim di header Authorization).
+    """
+    url = f"{OPENAI_BASE_URL}/v1/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if _is_reasoning_model(model):
+        # Model reasoning: temperature hanya boleh 1 (default) dan
+        # batas output memakai max_completion_tokens.
+        payload["max_completion_tokens"] = max_output_tokens
+    else:
+        payload["temperature"] = temperature
+        payload["max_tokens"] = max_output_tokens
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    own_client = http_client is None
+    client = http_client or httpx.Client(timeout=120.0)
+    try:
+        resp = client.post(url, headers=headers, json=payload)
+    except httpx.RequestError as e:
+        raise OpenAIError(
+            f"Tidak dapat menghubungi OpenAI API: {type(e).__name__}: {e}"
+        )
+    finally:
+        if own_client:
+            client.close()
+    if resp.status_code != 200:
+        try:
+            err = resp.json().get("error", {}) or {}
+            msg = err.get("message") or resp.text
+            code = err.get("code") or ""
+        except Exception:
+            msg = resp.text
+            code = ""
+        raise OpenAIError(
+            f"OpenAI API error [{resp.status_code}]: {msg}"
+            + (f" (code: {code})" if code else ""),
+            status_code=resp.status_code,
+        )
+    try:
+        data = resp.json()
+        choices = data.get("choices", []) or []
+        text = (choices[0].get("message", {}) or {}).get("content") or ""
+    except Exception:
+        raise OpenAIError("Respons OpenAI bukan JSON yang valid.")
+    text = (text or "").strip()
+    if not text:
+        raise OpenAIError("OpenAI mengembalikan respons kosong (tidak ada teks).")
+    return text
+
+
+def generate_with_provider(db, prompt, temperature=0.7,
+                           max_output_tokens=8192, http_client=None):
+    """Panggil provider AI aktif dari settings (Gemini/OpenAI).
+
+    Mengembalikan (teks, provider, model). Provider dibaca dari setting
+    "ai_provider" ("gemini" default bila kosong/tidak dikenal). Bila
+    provider OpenAI dipilih tapi kuncinya belum dikonfigurasi, raise
+    OpenAIError dengan pesan yang jelas (begitu pula Gemini).
+    """
+    from app.services.settings import (
+        AI_PROVIDER,
+        GEMINI_API_KEY,
+        OPENAI_API_KEY,
+        OPENAI_MODEL,
+        get_setting_value,
+    )
+
+    provider = (get_setting_value(db, AI_PROVIDER) or "gemini").strip().lower()
+    if provider not in ("gemini", "openai"):
+        provider = "gemini"
+    if provider == "openai":
+        api_key = get_setting_value(db, OPENAI_API_KEY)
+        if not api_key:
+            raise OpenAIError(
+                "Kunci OpenAI belum dikonfigurasi di Pengaturan AI. "
+                "Tempel kunci OpenAI dulu, simpan, lalu coba lagi."
+            )
+        model = get_setting_value(db, OPENAI_MODEL) or DEFAULT_OPENAI_MODEL
+        return (
+            generate_text_openai(
+                api_key, prompt, model=model, temperature=temperature,
+                max_output_tokens=max_output_tokens, http_client=http_client,
+            ),
+            "openai",
+            model,
+        )
+    api_key = get_setting_value(db, GEMINI_API_KEY)
+    if not api_key:
+        raise GeminiError(
+            "Kunci Gemini belum dikonfigurasi di Pengaturan AI. "
+            "Tempel kunci Gemini dulu, simpan, lalu coba lagi."
+        )
+    model = get_setting_value(db, "gemini_model") or DEFAULT_MODEL
+    return (
+        generate_text(
+            api_key, prompt, model=model, temperature=temperature,
+            max_output_tokens=max_output_tokens, http_client=http_client,
+        ),
+        "gemini",
+        model,
+    )
 
 
 def build_rewrite_prompt(channel, source_title, source_text, mode,

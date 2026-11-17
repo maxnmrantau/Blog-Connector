@@ -1,8 +1,9 @@
-"""Auto-Rewrite: sumber (RSS/URL/teks mentah) -> draf artikel baru via Gemini.
+"""Auto-Rewrite: sumber (RSS/URL/teks mentah) -> draf artikel baru via
+provider AI aktif (Gemini atau OpenAI, dipilih di Pengaturan AI).
 
 Alur: ambil teks lengkap sumber (lewat ArticleSource atau extractor yang
-sudah ada) -> susun prompt dari profil channel -> panggil Gemini dengan
-kunci tersimpan -> simpan sebagai Publication status draft di database
+sudah ada) -> susun prompt dari profil channel -> panggil provider aktif
+dengan kunci tersimpan -> simpan sebagai Publication status draft di database
 DAN sebagai draf di Blogger (supaya bisa diterbitkan dari dashboard).
 
 Hasil TIDAK PERNAH diterbitkan otomatis. Bila pembuatan draf di Blogger
@@ -21,17 +22,16 @@ from app.models import ArticleSource, Channel, Publication
 from app.security import authenticate_agent_or_session
 from app.services.extractor import ArticleExtractor
 from app.services.rewrite import (
-    DEFAULT_MODEL,
     REWRITE_MODES,
     GeminiError,
+    OpenAIError,
     build_rewrite_prompt,
     count_words,
-    generate_text,
+    generate_with_provider,
     parse_model_output,
     similarity_ratio,
 )
 from app.services.seo import slugify
-from app.services.settings import GEMINI_API_KEY, get_setting_value
 from app.services.platforms.blogger import BloggerPlatform
 
 router = APIRouter(prefix="/api/v1/rewrite", tags=["Auto-Rewrite"])
@@ -149,23 +149,18 @@ def rewrite_article(
             detail="Teks sumber kosong — tidak ada yang bisa ditulis ulang.",
         )
 
-    api_key = get_setting_value(db, GEMINI_API_KEY)
-    if not api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Kunci Gemini belum diisi. Isi dulu di dashboard → Pengaturan AI.",
-        )
-    model = get_setting_value(db, "gemini_model") or DEFAULT_MODEL
-
     prompt = build_rewrite_prompt(
         channel, source_title, source_text, payload.mode, source_url)
     mode_info = REWRITE_MODES[payload.mode]
     try:
-        raw_output = generate_text(
-            api_key, prompt, model=model,
-            temperature=mode_info["temperature"],
+        raw_output, _provider, _model = generate_with_provider(
+            db, prompt, temperature=mode_info["temperature"],
         )
-    except GeminiError as e:
+    except (GeminiError, OpenAIError) as e:
+        # Kunci provider belum dikonfigurasi -> 400 (kesalahan admin);
+        # kegagalan lain dari provider -> 502.
+        if "belum dikonfigurasi" in str(e):
+            raise HTTPException(status_code=400, detail=str(e))
         raise HTTPException(status_code=502, detail=str(e))
 
     new_title, body_html = parse_model_output(raw_output)

@@ -150,6 +150,21 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
     pexels_configured = bool(get_setting_value(db, "pexels_api_key"))
     gemini_badge = _ai_key_badge(gemini_configured)
     pexels_badge = _ai_key_badge(pexels_configured)
+    # Provider AI aktif + model OpenAI untuk section Pengaturan AI.
+    ai_provider = (get_setting_value(db, "ai_provider") or "gemini").strip().lower()
+    if ai_provider not in ("gemini", "openai"):
+        ai_provider = "gemini"
+    openai_badge = _ai_key_badge(bool(get_setting_value(db, "openai_api_key")))
+    openai_model = get_setting_value(db, "openai_model") or "gpt-4o-mini"
+    ai_provider_gemini_selected = "selected" if ai_provider == "gemini" else ""
+    ai_provider_openai_selected = "selected" if ai_provider == "openai" else ""
+    openai_model_gpt4o_selected = "selected" if openai_model == "gpt-4o-mini" else ""
+    openai_model_41nano_selected = "selected" if openai_model == "gpt-4.1-nano" else ""
+    openai_model_5nano_selected = "selected" if openai_model == "gpt-5-nano" else ""
+    openai_model_custom = (
+        "" if openai_model in ("gpt-4o-mini", "gpt-4.1-nano", "gpt-5-nano")
+        else html_escape(openai_model, quote=True)
+    )
 
     # Buat baris tabel channel
     channel_rows = ""
@@ -926,6 +941,8 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 <ul class="list-disc ml-5 mt-2 space-y-1.5">
                     <li>Fungsi: menyimpan kunci API pihak ketiga untuk fitur otomatis.</li>
                     <li>Kunci Gemini: dipakai Auto-Rewrite (menu Ingest) dan Ide Topik. Buat gratis di Google AI Studio. Klik "Tes Kunci" untuk menguji kunci yang tersimpan — hasilnya langsung tampil beserta penyebabnya bila gagal.</li>
+                    <li>Provider AI: pilih Gemini atau OpenAI pada dropdown di bawah — provider ini dipakai Auto-Rewrite dan Ide Topik. Bila provider OpenAI dipilih tapi kuncinya belum diisi, fitur AI akan error dengan pesan yang jelas.</li>
+                    <li>Kunci OpenAI: dibuat di platform.openai.com (API Keys). OpenAI berbayar dari token pertama — tidak ada free tier, butuh saldo/billing. Model default gpt-4o-mini: $0,15/1 jt token input, $0,60/1 jt output; satu artikel ±800 kata kurang dari $0,001. Tidak ada model gpt-4o-nano — yang paling murah gpt-5-nano ($0,05/$0,40).</li>
                     <li>Kunci Pexels: dipakai Image Picker untuk mencari foto gratis; opsional — tanpa kunci Pexels, Image Picker tetap jalan memakai Openverse (lisensi CC).</li>
                     <li>Catatan: kunci disimpan di database server dan tidak pernah ditampilkan lagi setelah disimpan — kosongkan kolom bila tidak ingin mengubahnya.</li>
                     <li>Bila Tes Kunci gagal dengan pesan free tier tidak tersedia untuk proyek itu, free tier dikunci untuk proyek Google tersebut — kunci baru di proyek yang sama akan gagal juga; buat kunci di proyek Google baru, lengkapi verifikasi akun, atau pasang billing.</li>
@@ -934,7 +951,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="mb-4">
                     <h2 class="text-lg font-bold text-white">Pengaturan AI</h2>
-                    <p class="text-xs text-slate-400">Kunci API untuk fitur otomatis: Gemini dipakai Auto-Rewrite dan Ide Topik, Pexels dipakai Image Picker. Kunci disimpan di database server dan tidak pernah ditampilkan lagi setelah disimpan — kosongkan kolom bila tidak ingin mengubahnya.</p>
+                    <p class="text-xs text-slate-400">Kunci API untuk fitur otomatis: provider AI aktif (Gemini/OpenAI) dipakai Auto-Rewrite dan Ide Topik, Pexels dipakai Image Picker. Kunci disimpan di database server dan tidak pernah ditampilkan lagi setelah disimpan — kosongkan kolom bila tidak ingin mengubahnya.</p>
                 </div>
                 <div class="space-y-4 max-w-xl">
                     <div>
@@ -942,10 +959,36 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                         <div class="flex items-center gap-2">
                             <input type="password" id="geminiKeyInput" autocomplete="off" placeholder="AI... (kosongkan bila tidak diubah)" class="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
                             <span id="geminiBadge">{gemini_badge}</span>
-                            <button type="button" onclick="testGeminiKey(this)" title="Uji kunci Gemini yang tersimpan" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 font-bold px-3 py-2 rounded-xl text-xs transition whitespace-nowrap">🔑 Tes Kunci</button>
+                            <button type="button" onclick="testGeminiKey(this)" title="Uji kunci provider AI aktif yang tersimpan" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 font-bold px-3 py-2 rounded-xl text-xs transition whitespace-nowrap">🔑 Tes Kunci</button>
                         </div>
                         <p class="text-[11px] text-slate-500 mt-1">Dipakai Auto-Rewrite dan Ide Topik. Dapat dibuat gratis di Google AI Studio.</p>
                         <div id="geminiTestResult" class="text-xs mt-2"></div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Provider AI Aktif</label>
+                        <select id="aiProviderSelect" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            <option value="gemini" {ai_provider_gemini_selected}>Gemini (Google)</option>
+                            <option value="openai" {ai_provider_openai_selected}>OpenAI (GPT)</option>
+                        </select>
+                        <p class="text-[11px] text-slate-500 mt-1">Provider ini dipakai Auto-Rewrite dan Ide Topik. Simpan dulu, lalu tekan Tes Kunci untuk menguji provider aktif.</p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">OpenAI API Key</label>
+                        <div class="flex items-center gap-2">
+                            <input type="password" id="openaiKeyInput" autocomplete="off" placeholder="sk-... (kosongkan bila tidak diubah)" class="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            <span id="openaiBadge">{openai_badge}</span>
+                        </div>
+                        <p class="text-[11px] text-slate-500 mt-1">Dibuat di platform.openai.com (API Keys). OpenAI berbayar dari token pertama — tidak ada free tier, butuh saldo/billing.</p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Model OpenAI</label>
+                        <select id="openaiModelSelect" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            <option value="gpt-4o-mini" {openai_model_gpt4o_selected}>gpt-4o-mini — $0,15 input / $0,60 output per 1 jt token (murah, umum dipakai)</option>
+                            <option value="gpt-4.1-nano" {openai_model_41nano_selected}>gpt-4.1-nano — $0,10 / $0,40 per 1 jt token (lebih murah)</option>
+                            <option value="gpt-5-nano" {openai_model_5nano_selected}>gpt-5-nano — $0,05 / $0,40 per 1 jt token (paling murah)</option>
+                        </select>
+                        <input type="text" id="openaiModelCustomInput" autocomplete="off" placeholder="atau model lain (kosongkan bila memakai pilihan di atas)" value="{openai_model_custom}" class="w-full mt-2 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        <p class="text-[11px] text-slate-500 mt-1">Satu artikel ±800 kata biayanya kurang dari $0,001. Tidak ada model gpt-4o-nano. Bila mengisi model lain, isiannya dipakai sebagai pengganti pilihan di atas.</p>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Pexels API Key</label>
@@ -1092,14 +1135,14 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     <li>Sumber (tombol filter): Semua, Tren (berita populer Indonesia dari Google News), Search Console (kueri yang sudah mendapat impresi tapi CTR rendah), RSS (headline feed channel), Celah Blog (label yang baru punya 1 artikel, untuk pendalaman).</li>
                     <li>Cara pakai: pilih blog lalu klik "Muat Ide"; atau ketik kata kunci bebas lalu "Cari Ide dari Kata Kunci" — ide diambil dari berita Google News tentang kata itu. Tiap ide punya skor 0–100 dan alasan yang menunjukkan seberapa kuat sinyalnya.</li>
                     <li>Aksi per ide: "Buat Kerangka" membuat draf outline lengkap (judul, H2/H3, poin penting, kata kunci, label, meta description); "Buat Draf" membuat draf kerangka sederhana; "Buang" menyembunyikan ide itu.</li>
-                    <li>Catatan: ide yang sudah dipakai atau dibuang tidak muncul lagi. Gemini hanya memperkaya judul dan kerangka bila kuncinya berfungsi — tanpa kunci Gemini pun ide tetap dihasilkan dari data.</li>
+                    <li>Catatan: ide yang sudah dipakai atau dibuang tidak muncul lagi. Provider AI aktif hanya memperkaya judul dan kerangka bila kuncinya berfungsi — tanpa kunci AI pun ide tetap dihasilkan dari data.</li>
                 </ul>
             </details>
                 <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <div>
                             <h2 class="text-lg font-bold text-white">💡 Ide Topik</h2>
-                            <p class="text-xs text-slate-400 mt-1">Usulan judul dari sinyal nyata — berita populer Indonesia (Google News), peluang Search Console, headline RSS, celah konten sendiri, atau kata kunci bebas. Bukan dari niche channel. Skor 0–100 + alasan menunjukkan seberapa kuat sinyalnya. "Buat Kerangka" membuat draf outline lengkap; Gemini hanya memperkaya bila kuncinya berfungsi.</p>
+                            <p class="text-xs text-slate-400 mt-1">Usulan judul dari sinyal nyata — berita populer Indonesia (Google News), peluang Search Console, headline RSS, celah konten sendiri, atau kata kunci bebas. Bukan dari niche channel. Skor 0–100 + alasan menunjukkan seberapa kuat sinyalnya. "Buat Kerangka" membuat draf outline lengkap; provider AI aktif hanya memperkaya bila kuncinya berfungsi.</p>
                         </div>
                         <div class="flex flex-wrap gap-2">
                             <select id="topicChannelSelect" class="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"></select>
@@ -1128,8 +1171,8 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 <ul class="list-disc ml-5 mt-2 space-y-1.5">
                     <li>Fungsi: mendaftarkan feed RSS per blog, mengambil item terbarunya, lalu menjadikannya bahan artikel.</li>
                     <li>Cara pakai: isi Blog, URL Feed RSS, dan Judul Feed lalu klik "Tambah Feed"; klik "Ambil Sekarang" pada feed untuk mengambil item terbaru — URL yang sudah pernah diambil dilewati.</li>
-                    <li>Antrean bahan: tiap item punya "Jadikan Draf" (judul dan isi bahan dimasukkan ke form Tulis Artikel untuk ditulis ulang sendiri) dan "Rewrite jadi Draf" (menulis ulang otomatis memakai Gemini; hasilnya selalu disimpan sebagai draf lengkap dengan tautan atribusi ke sumber).</li>
-                    <li>Mode rewrite: Ringan (susunan kalimat diubah), Sedang (struktur dan contoh baru), Total (sudut pandang baru). Rewrite memakai kunci Gemini dari Pengaturan AI dan bisa memakan waktu 1–2 menit.</li>
+                    <li>Antrean bahan: tiap item punya "Jadikan Draf" (judul dan isi bahan dimasukkan ke form Tulis Artikel untuk ditulis ulang sendiri) dan "Rewrite jadi Draf" (menulis ulang otomatis memakai provider AI aktif; hasilnya selalu disimpan sebagai draf lengkap dengan tautan atribusi ke sumber).</li>
+                    <li>Mode rewrite: Ringan (susunan kalimat diubah), Sedang (struktur dan contoh baru), Total (sudut pandang baru). Rewrite memakai provider AI aktif dari Pengaturan AI dan bisa memakan waktu 1–2 menit.</li>
                     <li>Catatan: antrean ini hanya menyiapkan bahan — penulisan ulang dikerjakan AI agent supaya konten tetap orisinal, bukan spin mentah. Menonaktifkan feed tidak memblokir pengambilan manual lewat "Ambil Sekarang".</li>
                 </ul>
             </details>
@@ -1184,7 +1227,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="mb-4">
                     <h2 class="text-lg font-bold text-white">Antrean Bahan — Hasil Fetch Terbaru</h2>
-                    <p class="text-xs text-slate-400">Item terbaru dari feed yang sudah diambil. Klik "Jadikan Draf" untuk memasukkan bahan ke form Tulis Artikel dan menulis ulang sendiri, atau "Rewrite jadi Draf" untuk menulis ulang otomatis memakai Gemini — hasilnya selalu disimpan sebagai draf, lengkap dengan tautan atribusi ke sumber.</p>
+                    <p class="text-xs text-slate-400">Item terbaru dari feed yang sudah diambil. Klik "Jadikan Draf" untuk memasukkan bahan ke form Tulis Artikel dan menulis ulang sendiri, atau "Rewrite jadi Draf" untuk menulis ulang otomatis memakai provider AI aktif — hasilnya selalu disimpan sebagai draf, lengkap dengan tautan atribusi ke sumber.</p>
                 </div>
                 <div class="flex flex-wrap items-end gap-3 mb-4">
                     <div>
@@ -1201,7 +1244,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                             <option value="total">Total — sudut pandang baru</option>
                         </select>
                     </div>
-                    <p class="text-[11px] text-slate-500">Rewrite memakai kunci Gemini dari Pengaturan AI dan bisa memakan waktu 1–2 menit.</p>
+                    <p class="text-[11px] text-slate-500">Rewrite memakai provider AI aktif dari Pengaturan AI dan bisa memakan waktu 1–2 menit.</p>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
@@ -2123,18 +2166,31 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 }}
             }}
 
-            // Simpan kunci API AI (Gemini / Pexels). Hanya kolom yang
-            // diisi yang dikirim; kolom kosong berarti tidak diubah.
+            // Simpan kunci API AI (Gemini / OpenAI / Pexels) + provider
+            // dan model OpenAI. Hanya kolom kunci yang diisi yang dikirim;
+            // provider selalu dikirim; model dikirim bila berubah.
             async function saveAiSettings(btn) {{
                 const gemini = document.getElementById('geminiKeyInput').value.trim();
                 const pexels = document.getElementById('pexelsKeyInput').value.trim();
-                if (!gemini && !pexels) {{
-                    showToast('Tidak ada kunci yang diisi — kosongkan bila tidak ingin mengubah.', 'error');
+                const openai = document.getElementById('openaiKeyInput').value.trim();
+                const providerSel = document.getElementById('aiProviderSelect');
+                const provider = providerSel.value;
+                const providerInitial = (providerSel.querySelector('option[selected]') || {{}}).value || 'gemini';
+                const modelSel = document.getElementById('openaiModelSelect');
+                const modelCustomInput = document.getElementById('openaiModelCustomInput');
+                const modelCustom = modelCustomInput.value.trim();
+                const model = modelCustom || modelSel.value;
+                const modelInitial = modelCustomInput.defaultValue.trim() || (modelSel.querySelector('option[selected]') || {{}}).value || 'gpt-4o-mini';
+                if (!gemini && !pexels && !openai && provider === providerInitial && model === modelInitial) {{
+                    showToast('Tidak ada yang diubah — isi kunci atau ubah provider/model dulu.', 'error');
                     return;
                 }}
                 const payload = {{}};
                 if (gemini) payload.gemini_api_key = gemini;
                 if (pexels) payload.pexels_api_key = pexels;
+                if (openai) payload.openai_api_key = openai;
+                payload.ai_provider = provider;
+                if (model !== modelInitial) payload.openai_model = model;
                 setBtnLoading(btn, true, 'Menyimpan…');
                 try {{
                     const res = await fetch('/api/v1/settings/ai', {{
@@ -2156,18 +2212,20 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 }}
             }}
 
-            // Uji kunci Gemini yang tersimpan (POST /api/v1/settings/ai/test).
+            // Uji kunci provider AI aktif yang tersimpan (POST /api/v1/settings/ai/test).
             // Hasil tampil inline di bawah field Gemini: hijau bila kunci
             // berfungsi, merah/amber dengan pesan jelas bila gagal.
+            // (Nama fungsi testGeminiKey dipertahankan demi kompatibilitas.)
             async function testGeminiKey(btn) {{
                 const box = document.getElementById('geminiTestResult');
-                box.innerHTML = '<span class="text-slate-400">Menguji kunci Gemini…</span>';
+                box.innerHTML = '<span class="text-slate-400">Menguji kunci AI aktif…</span>';
                 if (btn) setBtnLoading(btn, true, 'Menguji…');
                 try {{
                     const res = await fetch('/api/v1/settings/ai/test', {{ method: 'POST' }});
                     const data = await res.json();
                     if (res.ok && data.ok) {{
-                        box.innerHTML = '<div class="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-emerald-300">Kunci Gemini berfungsi — model ' + escapeHtml(data.model || '') + ' (' + (data.latency_ms || 0) + ' ms).</div>';
+                        const prov = (data.provider === 'openai') ? 'OpenAI' : 'Gemini';
+                        box.innerHTML = '<div class="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-emerald-300">Kunci ' + prov + ' berfungsi — model ' + escapeHtml(data.model || '') + ' (' + (data.latency_ms || 0) + ' ms).</div>';
                     }} else {{
                         const msg = (data && data.error) || (data && data.detail) || 'Tes kunci gagal.';
                         box.innerHTML = '<div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-amber-200">' + escapeHtml(msg) + '</div>';
@@ -2179,7 +2237,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 }}
             }}
 
-            // Tulis ulang bahan dari antrean memakai Gemini, simpan sebagai
+            // Tulis ulang bahan dari antrean memakai provider AI aktif, simpan sebagai
             // draf (tidak pernah langsung terbit). Prosesnya bisa 1-2 menit.
             async function rewriteSourceAsDraft(sourceId, btn) {{
                 const channelId = document.getElementById('rewriteChannel').value;
@@ -2780,7 +2838,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     if (!res.ok) {{ showToast('Gagal membuat kerangka: ' + (data.detail || 'Terjadi kesalahan'), 'error'); return; }}
                     idea.library_status = 'dipakai';
                     let msg = 'Draf kerangka dibuat: ' + (data.title || '') + ' (id ' + data.publication_id + '). Lengkapi di seksi Artikel.';
-                    if (data.ai_used) {{ msg += ' (Judul/kerangka diperkaya Gemini AI.)'; }}
+                    if (data.ai_used) {{ msg += ' (Judul/kerangka diperkaya AI.)'; }}
                     else if (data.ai_error) {{ msg += ' (AI tidak dipakai: ' + data.ai_error + ')'; }}
                     showToast(msg);
                 }} catch (err) {{

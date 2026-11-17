@@ -37,10 +37,14 @@ import urllib.parse
 from collections import Counter
 
 from app.models import ArticleSource, FeedSource, Publication, TopicIdea
-from app.services.rewrite import DEFAULT_MODEL, GeminiError, generate_text
+from app.services.rewrite import (
+    GeminiError,
+    OpenAIError,
+    generate_text,
+    generate_with_provider,
+)
 from app.services.search_console import SearchConsoleError, get_overview
 from app.services.seo import keywords_from_text, slugify
-from app.services.settings import GEMINI_API_KEY, get_setting_value
 
 # feedparser dipakai untuk RSS Google News; di-import malas seperti
 # routes_feeds supaya aplikasi tetap boot bila belum terpasang.
@@ -1000,16 +1004,13 @@ def _parse_ai_outline(text):
 
 
 def enrich_outline_with_ai(idea_title, keyword, db, http_client=None):
-    """Coba perkaya judul + kerangka dengan Gemini.
+    """Coba perkaya judul + kerangka dengan provider AI aktif
+    (Gemini/OpenAI, dipilih di Pengaturan AI).
 
     Mengembalikan (title|None, sections|None, ai_used, ai_error).
     TIDAK PERNAH raise: bila tidak ada kunci, kunci gagal (403 dsb.),
     atau respons tidak bisa diparse, pemanggil memakai template.
     """
-    api_key = get_setting_value(db, GEMINI_API_KEY)
-    if not api_key:
-        return None, None, False, None
-    model = get_setting_value(db, "gemini_model") or DEFAULT_MODEL
     prompt = (
         f"Kamu editor blog. Buatkan kerangka artikel Bahasa Indonesia untuk "
         f"judul \"{idea_title}\" (kata kunci: {keyword}).\n"
@@ -1022,15 +1023,14 @@ def enrich_outline_with_ai(idea_title, keyword, db, http_client=None):
         "5. Penutup — <poin rangkuman>; <poin ajakan>\n"
     )
     try:
-        text = generate_text(
-            api_key,
+        text, _provider, _model = generate_with_provider(
+            db,
             prompt,
-            model=model,
             temperature=0.7,
             max_output_tokens=1024,
             http_client=http_client,
         )
-    except GeminiError as e:
+    except (GeminiError, OpenAIError) as e:
         return None, None, False, str(e)
     title, sections = _parse_ai_outline(text)
     if not sections:
@@ -1038,7 +1038,7 @@ def enrich_outline_with_ai(idea_title, keyword, db, http_client=None):
             None,
             None,
             False,
-            "Respons Gemini tidak dapat dipahami sebagai kerangka — dipakai template.",
+            "Respons AI tidak dapat dipahami sebagai kerangka — dipakai template.",
         )
     return title, sections, True, None
 

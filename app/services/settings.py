@@ -1,4 +1,4 @@
-"""Penyimpanan kunci API pihak ketiga (Gemini, Pexels) di tabel settings.
+"""Penyimpanan kunci API pihak ketiga (Gemini, OpenAI, Pexels) di tabel settings.
 
 Kunci TIDAK PERNAH dikembalikan utuh lewat API dan tidak pernah ditulis
 ke log. GET /api/v1/settings/ai hanya mengembalikan status boolean +
@@ -13,6 +13,17 @@ from app.models import Setting
 
 GEMINI_API_KEY = "gemini_api_key"
 PEXELS_API_KEY = "pexels_api_key"
+
+# Provider AI aktif untuk Auto-Rewrite dan pengayaan Ide Topik:
+# "gemini" (default) atau "openai". Kunci + model OpenAI di bawah.
+AI_PROVIDER = "ai_provider"
+OPENAI_API_KEY = "openai_api_key"
+OPENAI_MODEL = "openai_model"
+
+# Model OpenAI default: gpt-4o-mini ($0,15/1 jt token input,
+# $0,60/1 jt output — satu artikel ±800 kata kurang dari $0,001).
+# TIDAK ADA model "gpt-4o-nano". Bisa diubah lewat Pengaturan AI.
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
 
 def get_setting_value(db: Session, key: str) -> Optional[str]:
