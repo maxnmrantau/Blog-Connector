@@ -990,6 +990,14 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                             <button type="button" onclick="reconnectScChannel()" title="Hubungkan ulang OAuth untuk blog yang dipilih — token baru tersimpan otomatis" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 font-bold px-4 py-2 rounded-xl text-xs transition">🔗 Hubungkan Ulang</button>
                         </div>
                     </div>
+                    <details class="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl px-4 py-3 text-xs text-slate-300">
+                        <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: supaya data Search Console bisa tampil</summary>
+                        <ol class="list-decimal ml-5 mt-2 space-y-1.5">
+                            <li>Aktifkan <b>Google Search Console API</b> di Google Cloud → APIs &amp; Services → Library → cari "Google Search Console API" → Enable.</li>
+                            <li>Hubungkan ulang OAuth sekali lewat tombol <b>Hubungkan Ulang</b> di atas, memakai Client ID/Secret dari OAuth Client tipe <b>Web application</b> yang sudah didaftari redirect URI <span class="font-mono text-emerald-400">https://blog-connector-six.vercel.app/oauth/blogger/callback</span> — token baru tersimpan otomatis, tanpa salin-tempel.</li>
+                            <li>Daftarkan blog sebagai properti di <b>Search Console</b> (search.google.com/search-console), lalu submit sitemap di menu Sitemaps: alamat blog + <span class="font-mono text-emerald-400">/sitemap.xml</span>. Data kueri biasanya baru tampil 2–3 hari setelah blog terindeks.</li>
+                        </ol>
+                    </details>
                     <div id="scContent" class="text-sm text-slate-400">Pilih blog lalu klik "Muat Data".</div>
                 </div>
             </section>
@@ -1000,7 +1008,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <div>
                             <h2 class="text-lg font-bold text-white">💡 Ide Topik</h2>
-                            <p class="text-xs text-slate-400 mt-1">Usulan judul dari sinyal nyata — tren Google Indonesia, peluang Search Console, headline RSS, celah konten sendiri, atau kata kunci bebas. Bukan dari niche channel. Skor 0–100 + alasan menunjukkan seberapa kuat sinyalnya. "Buat Kerangka" membuat draf outline lengkap; Gemini hanya memperkaya bila kuncinya berfungsi.</p>
+                            <p class="text-xs text-slate-400 mt-1">Usulan judul dari sinyal nyata — berita populer Indonesia (Google News), peluang Search Console, headline RSS, celah konten sendiri, atau kata kunci bebas. Bukan dari niche channel. Skor 0–100 + alasan menunjukkan seberapa kuat sinyalnya. "Buat Kerangka" membuat draf outline lengkap; Gemini hanya memperkaya bila kuncinya berfungsi.</p>
                         </div>
                         <div class="flex flex-wrap gap-2">
                             <select id="topicChannelSelect" class="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"></select>
@@ -2566,6 +2574,9 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                             html += '<p class="text-[11px] text-amber-400 mb-2">' + escapeHtml(sourceNames[key] || key) + ': ' + escapeHtml(st.message) + '</p>';
                         }}
                     }});
+                    if (seed) {{
+                        html += '<p class="text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-3 py-2 mb-3">Hasil pencarian kata kunci &quot;' + escapeHtml(seed) + '&quot; — dari berita Google News Indonesia.</p>';
+                    }}
                     if (!topicIdeas.length) {{ box.innerHTML = html + '<p class="text-xs text-slate-500">Belum ada ide dari sumber ini. Coba sumber lain, tambah RSS di seksi Ingest, atau isi kata kunci bebas.</p>'; return; }}
                     html += topicIdeas.map(function(idea, i) {{
                         let card = '<div class="bg-slate-800 rounded-xl p-3 mb-2"><div class="flex flex-wrap items-start justify-between gap-2"><div class="flex-1 min-w-[200px]">';

@@ -12,13 +12,16 @@ create_draft_from_idea — draf saja, tidak pernah auto-publish.
 
 Ide Topik v2 (collect_v2_ideas): ide datang dari SINYAL NYATA, bukan
 dari string niche channel — niche TIDAK dipakai sama sekali di v2:
-- trends: Google Trends Indonesia (RSS, tanpa kunci).
+- trends: berita populer Indonesia (Google News RSS, tanpa kunci).
 - search_console: kueri dengan impresi tinggi, posisi 5-20, CTR di
   bawah rata-rata (peluang konten) — memakai ulang get_overview.
 - feeds: headline FeedSource channel (logika feed yang sudah ada).
 - gaps: analisis Publication channel (label yang baru 1 artikel,
   artikel yang layak dibuat bagian 2).
-- seed: kata kunci bebas dari pengguna; niche diabaikan total.
+- seed: kata kunci bebas dari pengguna — dicari di Google News
+  Indonesia, ide dari headline nyata (bukan template); niche
+  diabaikan total. Bila tidak ada berita tentang kata kunci itu,
+  sumber ini kosong + pesan jujur.
 
 Gemini TIDAK dipanggil di endpoint ide v2 — ia hanya memperkaya
 kerangka di topics-outline (patch 03), dan selalu ada fallback
@@ -30,6 +33,7 @@ respons["sources"], bukan ide palsu.
 """
 import html as html_lib
 import re
+import urllib.parse
 from collections import Counter
 
 from app.models import ArticleSource, FeedSource, Publication, TopicIdea
@@ -38,7 +42,7 @@ from app.services.search_console import SearchConsoleError, get_overview
 from app.services.seo import keywords_from_text, slugify
 from app.services.settings import GEMINI_API_KEY, get_setting_value
 
-# feedparser dipakai untuk RSS Google Trends; di-import malas seperti
+# feedparser dipakai untuk RSS Google News; di-import malas seperti
 # routes_feeds supaya aplikasi tetap boot bila belum terpasang.
 try:
     import feedparser
@@ -317,26 +321,15 @@ def _mark_library_used(db, channel_id, title, publication_id):
 # Ide Topik v2 — multi-sumber berbasis sinyal nyata (tanpa niche).
 # ---------------------------------------------------------------------------
 
-TRENDS_RSS_URL = (
-    "https://trends.google.com/trends/trendingsearches/daily/rss?geo=ID"
+# Sumber "Tren" memakai Google News RSS Indonesia — Google Trends RSS
+# sudah mati (daily + realtime keduanya HTTP 404 sejak lama; Google
+# menonaktifkan endpoint-nya), jadi tren tidak lagi diambil dari sana.
+# Top stories (tanpa kunci) + search RSS bila dipanggil dengan seed.
+NEWS_RSS_URL = "https://news.google.com/rss?hl=id&gl=ID&ceid=ID:id"
+NEWS_SEARCH_RSS_URL = (
+    "https://news.google.com/rss/search?q={q}&hl=id&gl=ID&ceid=ID:id"
 )
 VALID_IDEA_SOURCES = ("all", "trends", "search_console", "feeds", "gaps", "seed")
-
-TREND_TITLE_TEMPLATES = [
-    "{kw} Lagi Ramai: Apa yang Perlu Kamu Tahu",
-    "Kenapa {kw} Jadi Perbincangan Hari Ini?",
-    "Panduan Singkat {kw} untuk Pemula",
-    "{kw}: Fakta Penting dan Cara Menyikapinya",
-]
-
-SEED_TITLE_TEMPLATES = [
-    "{kw}: Panduan Lengkap untuk Pemula",
-    "Cara Memulai {kw} dari Nol",
-    "5 Kesalahan Umum dalam {kw} (dan Cara Menghindarinya)",
-    "{kw} vs Alternatifnya: Mana yang Cocok untukmu?",
-    "Tips {kw} yang Wajib Dicoba Pemula",
-    "Mengenal {kw} Lebih Dekat: Alat, Teknik, dan Contoh",
-]
 
 SC_TITLE_TEMPLATES = [
     "{kw}: Panduan Lengkap dan Tips Praktis",
@@ -358,15 +351,34 @@ def _fmt_num(n):
         return "0"
 
 
-def _parse_traffic(raw):
-    """Perkiraan traffic Google Trends ('100.000+', '20,000+') -> int."""
-    if not raw:
-        return 0
-    digits = re.sub(r"[^0-9]", "", str(raw))
-    try:
-        return int(digits) if digits else 0
-    except ValueError:
-        return 0
+def _clean_news_title(raw):
+    """Judul Google News berbentuk 'Headline - Nama Media'.
+
+    Buang segmen media terakhir (setelah ' - ' terakhir) supaya yang
+    tersisa headline-nya saja; judul tanpa ' - ' dibiarkan utuh.
+    """
+    title = (raw or "").strip()
+    if " - " in title:
+        head, _, _tail = title.rpartition(" - ")
+        if head.strip():
+            title = head.strip()
+    return title
+
+
+def _news_keyword(title):
+    """Topik singkat dari judul berita untuk kata kunci + label.
+
+    Ambil bagian sebelum ':' bila 1-6 kata (mis. 'Gubernur Andra
+    Soni: ...' -> 'Gubernur Andra Soni'); bila tidak ada ':', ambil
+    4 kata pertama. Judul berita utuh terlalu panjang untuk kata kunci.
+    """
+    head = (title or "").strip()
+    if ":" in head:
+        before = head.split(":", 1)[0].strip()
+        if 1 <= len(before.split()) <= 6:
+            return before
+    words = head.split()
+    return " ".join(words[:4]).rstrip(":.,;!?") or head
 
 
 def _v2_idea(title, keyword, source, score, reason, origin, **extra):
@@ -387,13 +399,19 @@ def _v2_idea(title, keyword, source, score, reason, origin, **extra):
     return idea
 
 
-def fetch_trends_items(feed_parser=None):
-    """Ambil tren harian Google Trends Indonesia (RSS, tanpa kunci).
+def fetch_trends_items(feed_parser=None, seed=None):
+    """Ambil berita populer Indonesia dari Google News RSS (tanpa kunci).
 
-    Mengembalikan (items, status): items = [{title, traffic, url}];
-    status = {"available": bool, "count": int, "message": str}. Bila RSS
-    tidak bisa diakses atau kosong, items = [] dan status menjelaskan
-    kenapa — TIDAK PERNAH mengarang tren palsu.
+    Tanpa seed: top stories (https://news.google.com/rss?...). Dengan
+    seed: search RSS untuk kata kunci itu. Nama fungsi dipertahankan
+    (param `source=trends` dan label 'Tren' tidak berubah) — yang
+    diganti hanya backend fetcher-nya, karena Google Trends RSS sudah
+    mati (HTTP 404).
+
+    Mengembalikan (items, status): items = [{title, url}]; status =
+    {"available": bool, "count": int, "message": str}. Bila RSS tidak
+    bisa diakses atau kosong, items = [] dan status menjelaskan kenapa
+    — TIDAK PERNAH mengarang berita palsu.
     """
     parse = feed_parser or (feedparser.parse if feedparser else None)
     if parse is None:
@@ -401,83 +419,96 @@ def fetch_trends_items(feed_parser=None):
             "available": False,
             "message": "feedparser belum terpasang di server, sumber Tren tidak tersedia.",
         }
+    seed = (seed or "").strip()
+    url = (
+        NEWS_SEARCH_RSS_URL.format(q=urllib.parse.quote_plus(seed))
+        if seed
+        else NEWS_RSS_URL
+    )
     try:
-        parsed = parse(TRENDS_RSS_URL)
+        parsed = parse(url)
     except Exception as e:
         return [], {
             "available": False,
-            "message": f"Google Trends RSS tidak dapat diakses ({e}). Sumber Tren dilewati.",
+            "message": f"Google News RSS tidak dapat diakses ({e}). Sumber Tren dilewati.",
         }
     entries = (parsed or {}).get("entries") or []
     if not entries:
         return [], {
             "available": False,
             "message": (
-                "Google Trends RSS tidak mengembalikan data — endpoint tren "
-                "harian Google tampaknya sudah tidak aktif (terverifikasi "
-                "mengembalikan 404). Sumber Tren dilewati; sumber lain tetap jalan."
+                "Google News RSS tidak mengembalikan data — sumber Tren "
+                "dilewati; sumber lain tetap jalan."
             ),
         }
     items = []
     for entry in entries:
-        title = (entry.get("title") or "").strip()
+        title = _clean_news_title(entry.get("title"))
         if not title:
             continue
-        raw_traffic = (
-            entry.get("ht_approx_traffic") or entry.get("approx_traffic") or ""
-        )
         items.append(
             {
                 "title": title,
-                "traffic": _parse_traffic(raw_traffic),
                 "url": (entry.get("link") or "").strip(),
             }
         )
     if not items:
         return [], {
             "available": False,
-            "message": "Google Trends RSS tidak mengembalikan judul tren.",
+            "message": "Google News RSS tidak mengembalikan judul berita.",
         }
+    if seed:
+        message = (
+            f"{len(items)} berita populer tentang '{seed}' dari Google "
+            "News Indonesia."
+        )
+    else:
+        message = f"{len(items)} berita populer dari Google News Indonesia."
     return items, {
         "available": True,
         "count": len(items),
-        "message": f"{len(items)} tren harian dari Google Trends Indonesia.",
+        "message": message,
     }
 
 
-def generate_trend_ideas(items, limit=IDEAS_LIMIT):
-    """Ide judul dari tren Google Indonesia (tanpa niche, tanpa Gemini).
+def generate_trend_ideas(items, limit=IDEAS_LIMIT, seed=None, source="trends"):
+    """Ide judul dari berita populer Indonesia (tanpa niche, tanpa Gemini).
 
-    Skor = 55 dasar + bonus traffic (100rb+: +30, 50rb+: +20,
-    20rb+: +10, ada angka: +5), maks 95.
+    Judul ide = headline berita itu sendiri (topiknya); kata kunci =
+    topik singkat dari headline. Skor berdasarkan urutan di feed
+    (Google mengurutkan dari yang paling populer): 85 untuk berita
+    pertama, turun 2 per posisi, minimal 60.
+
+    source: 'trends' (top stories / tren tentang seed) atau 'seed'
+    (pencarian kata kunci bebas) — judul, skor, dan alasan sama;
+    hanya label sumber + origin yang berbeda.
     """
     ideas = []
+    seed = (seed or "").strip()
+    origin = "seed" if source == "seed" else "trend"
     for i, item in enumerate(items):
         if len(ideas) >= limit:
             break
-        kw = (item.get("title") or "").strip()
-        if not kw:
+        title = (item.get("title") or "").strip()
+        if not title:
             continue
-        kw_cap = kw[:1].upper() + kw[1:]
-        traffic = item.get("traffic") or 0
-        bonus = 30 if traffic >= 100000 else 20 if traffic >= 50000 else 10 if traffic >= 20000 else 5 if traffic > 0 else 0
-        template = TREND_TITLE_TEMPLATES[i % len(TREND_TITLE_TEMPLATES)]
-        if traffic > 0:
+        keyword = _news_keyword(title)
+        if seed:
             reason = (
-                f"Tren naik di Indonesia hari ini — perkiraan "
-                f"{_fmt_num(traffic)} penelusuran."
+                f"Berita populer tentang '{seed}' di Google News "
+                "Indonesia hari ini."
             )
         else:
-            reason = "Tren naik di Indonesia hari ini (Google Trends)."
+            reason = "Berita populer di Google News Indonesia hari ini."
         ideas.append(
             _v2_idea(
-                template.format(kw=kw_cap),
-                kw,
-                "trends",
-                55 + bonus,
+                title,
+                keyword,
+                source,
+                max(60, 85 - i * 2),
                 reason,
-                "trend",
-                source_title="Google Trends Indonesia",
+                origin,
+                source_title="Google News Indonesia",
                 source_url=item.get("url") or "",
             )
         )
@@ -619,35 +650,6 @@ def generate_gap_ideas(channel, db, limit=IDEAS_LIMIT):
     }
 
 
-def generate_seed_ideas(seed, limit=IDEAS_LIMIT):
-    """Ide dari kata kunci bebas pengguna. Niche channel DIABAIKAN total.
-
-    Skor 50 (netral, tanpa sinyal) — jujur: ide ini tidak didukung
-    data tren/kinerja apa pun, hanya titik awal menulis.
-    """
-    seed = (seed or "").strip()
-    seed_cap = seed[:1].upper() + seed[1:] if seed else ""
-    reason = (
-        f"Dari kata kunci bebas '{seed}' — niche channel tidak dipakai "
-        f"sama sekali."
-    )
-    ideas = []
-    for i, template in enumerate(SEED_TITLE_TEMPLATES):
-        if len(ideas) >= limit:
-            break
-        ideas.append(
-            _v2_idea(
-                template.format(kw=seed_cap),
-                seed,
-                "seed",
-                50,
-                reason,
-                "seed",
-            )
-        )
-    return ideas
-
-
 def collect_v2_ideas(
     channel,
     db,
@@ -676,9 +678,16 @@ def collect_v2_ideas(
     headline_source = "none"
 
     if "trends" in wanted:
-        items, status = fetch_trends_items(feed_parser=trends_fetcher)
+        # Mode seed hanya bila sumber yang diminta persis 'trends':
+        # berita populer dicari berdasarkan kata kunci itu. Bila
+        # source=all, tren memakai top stories (seed ditangani sumber
+        # 'seed' sendiri).
+        trend_seed = seed if source == "trends" else None
+        items, status = fetch_trends_items(
+            feed_parser=trends_fetcher, seed=trend_seed
+        )
         sources_status["trends"] = status
-        pooled.extend(generate_trend_ideas(items, limit=limit))
+        pooled.extend(generate_trend_ideas(items, limit=limit, seed=trend_seed))
 
     if "search_console" in wanted:
         sc_ideas, status = generate_search_console_ideas(
@@ -743,16 +752,20 @@ def collect_v2_ideas(
                 ),
             }
         else:
-            seed_ideas = generate_seed_ideas(seed, limit=limit)
-            sources_status["seed"] = {
-                "available": True,
-                "count": len(seed_ideas),
-                "message": (
-                    f"Ide di sekitar kata kunci '{(seed or '').strip()}' "
-                    f"(niche channel diabaikan)."
-                ),
-            }
-            pooled.extend(seed_ideas)
+            # Kata kunci bebas BERBASIS DATA (bukan template): cari kata
+            # kunci itu di Google News Indonesia, jadikan headline nyata
+            # sebagai ide dengan skor berbasis sinyal. Bila tidak ada
+            # berita tentang kata kunci itu, kembalikan kosong + pesan
+            # jujur — tidak ada lagi judul template generik skor 50.
+            seed_items, seed_status = fetch_trends_items(
+                feed_parser=trends_fetcher, seed=seed
+            )
+            sources_status["seed"] = seed_status
+            pooled.extend(
+                generate_trend_ideas(
+                    seed_items, limit=limit, seed=seed, source="seed"
+                )
+            )
 
     # Dedupe berdasarkan judul ternormalisasi (skor tertinggi menang),
     # lalu urutkan berdasarkan skor tertinggi dulu.
@@ -761,7 +774,14 @@ def collect_v2_ideas(
         key = normalize_title(idea["title"])
         if key not in best or idea["score"] > best[key]["score"]:
             best[key] = idea
-    ideas = sorted(best.values(), key=lambda i: i["score"], reverse=True)[:limit]
+    ideas = sorted(best.values(), key=lambda i: i["score"], reverse=True)
+    if source == "all":
+        # Mode "all": round-robin per sumber supaya satu sumber
+        # berskor tinggi (mis. tren berita 85-67) tidak memborong
+        # semua slot dan sumber lain (seed/gaps) tidak pernah terlihat.
+        ideas = _diverse_pick(ideas, limit)
+    else:
+        ideas = ideas[:limit]
 
     # Perpustakaan: ide yang sudah dipakai/dibuang tidak muncul lagi
     # sebagai baru; sisanya dianotasi dengan status perpustakaannya.
@@ -777,6 +797,28 @@ def collect_v2_ideas(
         "sources": sources_status,
         "ideas": ideas,
     }
+
+
+def _diverse_pick(ideas, limit):
+    """Pilih ide teratas dengan round-robin per sumber.
+
+    `ideas` sudah terurut skor menurun. Ambil bergiliran satu ide
+    terbaik dari tiap sumber (putaran 1: terbaik tiap sumber, putaran
+    2: terbaik kedua, dst.) sampai limit terpenuhi, lalu urutkan lagi
+    berdasarkan skor. Hasil: tiap sumber kebagian slot, hasil akhir
+    tetap terurut skor menurun.
+    """
+    by_source = {}
+    for idea in ideas:
+        by_source.setdefault(idea["source"], []).append(idea)
+    picked = []
+    while len(picked) < limit and any(by_source.values()):
+        for src in list(by_source):
+            if len(picked) >= limit:
+                break
+            if by_source[src]:
+                picked.append(by_source[src].pop(0))
+    return sorted(picked, key=lambda i: i["score"], reverse=True)
 
 
 def _apply_library_filter(db, channel_id, ideas):

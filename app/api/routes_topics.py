@@ -1,12 +1,13 @@
 """Endpoint Ide Topik v2: GET /api/v1/topics/ideas + POST /api/v1/topics/draft.
 
 Ide v2 datang dari SINYAL NYATA (bukan string niche channel):
-- trends: Google Trends Indonesia (RSS, tanpa kunci).
+- trends: berita populer Indonesia (Google News RSS, tanpa kunci).
 - search_console: kueri peluang (impresi tinggi, posisi 5-20, CTR
   di bawah rata-rata) — memakai ulang Search Console overview.
 - feeds: headline FeedSource channel.
 - gaps: celah dari konten sendiri (label 1 artikel, bagian 2).
-- seed: kata kunci bebas pengguna; niche diabaikan total.
+- seed: kata kunci bebas pengguna — dicari di Google News Indonesia,
+  ide dari headline nyata (bukan template); niche diabaikan total.
 
 Setiap ide membawa skor 0-100 + alasan satu kalimat berbasis sinyal.
 Sumber yang tidak tersedia mengembalikan list kosong + pesan jujur di
