@@ -1170,9 +1170,10 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: Ingest — Feed RSS dan Rewrite</summary>
                 <ul class="list-disc ml-5 mt-2 space-y-1.5">
                     <li>Fungsi: mendaftarkan feed RSS per blog, mengambil item terbarunya, lalu menjadikannya bahan artikel.</li>
-                    <li>Cara pakai: isi Blog, URL Feed RSS, dan Judul Feed lalu klik "Tambah Feed"; klik "Ambil Sekarang" pada feed untuk mengambil item terbaru — URL yang sudah pernah diambil dilewati.</li>
+                    <li>Cara pakai: isi Blog, URL Feed RSS, dan Judul Feed lalu klik "Tambah Feed"; klik "Ambil Sekarang" pada feed untuk mengambil item terbaru — URL yang sudah pernah diambil dilewati. Tidak tahu URL feed sebuah website? Pakai "Cari RSS dari Website" di bawah form itu: tempel alamat situsnya, lalu simpan feed yang ditemukan sekali klik atau salin URL-nya.</li>
                     <li>Antrean bahan: tiap item punya "Jadikan Draf" (judul dan isi bahan dimasukkan ke form Tulis Artikel untuk ditulis ulang sendiri) dan "Rewrite jadi Draf" (menulis ulang otomatis memakai provider AI aktif; hasilnya selalu disimpan sebagai draf lengkap dengan tautan atribusi ke sumber).</li>
                     <li>Mode rewrite: Ringan (susunan kalimat diubah), Sedang (struktur dan contoh baru), Total (sudut pandang baru). Rewrite memakai provider AI aktif dari Pengaturan AI dan bisa memakan waktu 1–2 menit.</li>
+                    <li>Setelah rewrite, skor kemiripan dan hasil Cek SEO langsung tampil di bawah antrean — skor hanya membandingkan dengan artikel sumbernya, bukan dengan seluruh internet.</li>
                     <li>Catatan: antrean ini hanya menyiapkan bahan — penulisan ulang dikerjakan AI agent supaya konten tetap orisinal, bukan spin mentah. Menonaktifkan feed tidak memblokir pengambilan manual lewat "Ambil Sekarang".</li>
                 </ul>
             </details>
@@ -1221,6 +1222,16 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                         <button type="button" onclick="handleAddFeed(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Tambah Feed</button>
                     </div>
                 </form>
+
+                <div class="border-t border-slate-800 pt-5 mt-5">
+                    <h3 class="text-sm font-bold text-white">🔍 Cari RSS dari Website</h3>
+                    <p class="text-xs text-slate-400 mb-3">Tempel alamat website (misal halaman utama situs berita) — kami periksa apakah situs itu punya feed RSS/Atom. Feed yang ditemukan bisa langsung disimpan atau disalin URL-nya.</p>
+                    <div class="flex flex-col sm:flex-row gap-2">
+                        <input type="url" id="discoverUrl" placeholder="misal: https://situs-berita.com" class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        <button type="button" onclick="discoverRss(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20 whitespace-nowrap">Cari RSS</button>
+                    </div>
+                    <div id="discoverResults" class="mt-3 space-y-2"></div>
+                </div>
             </div>
 
             <!-- Antrean bahan hasil fetch -->
@@ -1246,6 +1257,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     </div>
                     <p class="text-[11px] text-slate-500">Rewrite memakai provider AI aktif dari Pengaturan AI dan bisa memakan waktu 1–2 menit.</p>
                 </div>
+                <div id="rewriteResult" class="hidden mb-4"></div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
                         <thead>
@@ -2106,6 +2118,88 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 }}
             }}
 
+            // --- Cari RSS dari Website (discovery, hanya membaca) ---
+            let discoveredFeeds = [];
+            async function discoverRss(btn) {{
+                const url = document.getElementById('discoverUrl').value.trim();
+                const results = document.getElementById('discoverResults');
+                if (!url) {{
+                    showToast('Isi dulu alamat website yang mau dicek.', 'error');
+                    return;
+                }}
+                setBtnLoading(btn, true, 'Mencari…');
+                results.innerHTML = '<p class="text-xs text-slate-400">Mencari feed RSS di website itu…</p>';
+                try {{
+                    const res = await fetch('/api/v1/feeds/discover', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{url: url}})
+                    }});
+                    const data = await res.json();
+                    if (!res.ok) {{
+                        results.innerHTML = '<div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-xs text-amber-200">' + escapeHtml(data.detail || 'Gagal mencari feed.') + '</div>';
+                        return;
+                    }}
+                    discoveredFeeds = data.found || [];
+                    if (!discoveredFeeds.length) {{
+                        results.innerHTML = '<div class="bg-slate-800 border border-slate-700 rounded-xl p-3 text-xs text-slate-300">' + escapeHtml(data.message || 'Tidak ditemukan feed RSS di website ini.') + '</div>';
+                        return;
+                    }}
+                    let html = '<div class="text-xs font-bold text-emerald-400 mb-1">' + escapeHtml(data.message || '') + '</div>';
+                    discoveredFeeds.forEach((f, i) => {{
+                        html += '<div class="bg-slate-800 border border-slate-700 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center gap-2">'
+                            + '<div class="flex-1 min-w-0"><div class="text-xs font-bold text-white truncate">' + escapeHtml(f.title || f.url) + '</div>'
+                            + '<div class="text-[11px] text-slate-400 truncate">' + escapeHtml(f.url) + '</div>'
+                            + '<div class="text-[11px] text-slate-500">' + escapeHtml((f.type || 'rss').toUpperCase()) + '</div></div>'
+                            + '<div class="flex gap-2 shrink-0">'
+                            + '<button type="button" onclick="saveDiscoveredFeed(' + i + ', this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs transition">Simpan sebagai Feed</button>'
+                            + '<button type="button" onclick="copyDiscoveredFeed(' + i + ', this)" class="bg-slate-700 hover:bg-slate-600 text-slate-100 font-bold px-3 py-1.5 rounded-lg text-xs transition">Salin</button>'
+                            + '</div></div>';
+                    }});
+                    results.innerHTML = html;
+                }} catch (err) {{
+                    results.innerHTML = '<div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-xs text-amber-200">Error: ' + escapeHtml(String(err)) + '</div>';
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            async function saveDiscoveredFeed(idx, btn) {{
+                const channelId = document.getElementById('feedChannel').value;
+                const f = discoveredFeeds[idx];
+                if (!channelId || !f || !f.url) {{
+                    showToast('Pilih dulu blog untuk feed ini.', 'error');
+                    return;
+                }}
+                const payload = {{channel_id: channelId, feed_url: f.url}};
+                if (f.title) payload.title = f.title;
+                setBtnLoading(btn, true, 'Menyimpan…');
+                try {{
+                    const res = await fetch('/api/v1/feeds', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify(payload)
+                    }});
+                    const data = await res.json();
+                    if (res.ok) {{
+                        showToast('Feed RSS berhasil disimpan.');
+                        setTimeout(() => window.location.reload(), 800);
+                    }} else {{
+                        showToast('Gagal menyimpan: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            function copyDiscoveredFeed(idx, btn) {{
+                const f = discoveredFeeds[idx];
+                if (!f || !f.url) return;
+                copyToClipboard(f.url).then((ok) => showToast(ok ? 'URL feed disalin.' : 'Gagal menyalin URL feed.', ok ? 'success' : 'error'));
+            }}
+
             async function fetchFeed(feedId, btn) {{
                 setBtnLoading(btn, true, 'Mengambil…');
                 try {{
@@ -2247,6 +2341,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     return;
                 }}
                 setBtnLoading(btn, true, 'Merewrite…');
+                const box = document.getElementById('rewriteResult');
                 try {{
                     const res = await fetch('/api/v1/rewrite', {{
                         method: 'POST',
@@ -2254,14 +2349,64 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                         body: JSON.stringify({{channel_id: channelId, source_id: sourceId, mode: mode}})
                     }});
                     const data = await res.json();
-                    if (res.ok) {{
-                        let msg = 'Rewrite selesai: draf "' + data.title + '" (' + data.word_count + ' kata) tersimpan.';
-                        if (data.similarity_warning) msg += ' Peringatan: hasil terlalu mirip sumber (' + Math.round(data.similarity * 100) + '%).';
-                        if (data.blogger_draft_error) msg += ' Draf Blogger gagal dibuat: ' + data.blogger_draft_error;
-                        showToast(msg);
-                        setTimeout(() => window.location.reload(), 1200);
-                    }} else {{
+                    if (!res.ok) {{
                         showToast('Gagal rewrite: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                        return;
+                    }}
+                    const pct = Math.round((data.similarity || 0) * 100);
+                    const band = pct > 60
+                        ? {{cls: 'text-red-400', label: 'terlalu mirip sumber — tulis ulang lagi atau edit manual sebelum terbit', bg: 'border-red-500/40'}}
+                        : (pct >= 50
+                            ? {{cls: 'text-amber-400', label: 'masih cukup dekat dengan sumber — periksa sebelum terbit', bg: 'border-amber-500/40'}}
+                            : {{cls: 'text-emerald-400', label: 'cukup berbeda dari sumber', bg: 'border-emerald-500/40'}});
+                    let html = '<div class="bg-slate-800 border ' + band.bg + ' rounded-xl p-4 space-y-2">'
+                        + '<div class="text-sm font-bold text-white">Hasil Rewrite: ' + escapeHtml(data.title || 'Draf baru') + '</div>'
+                        + '<div class="text-xs text-slate-300">' + data.word_count + ' kata — draf tersimpan (ID ' + data.publication_id + ').</div>'
+                        + '<div class="text-xs">Kemiripan dengan sumber: <span class="font-bold ' + band.cls + '">' + pct + '%</span> <span class="text-slate-400">— ' + band.label + '.</span></div>'
+                        + '<p class="text-[11px] text-slate-500">Skor ini hanya membandingkan dengan artikel sumbernya, bukan dengan seluruh internet — tidak ada API plagiarisme dari Google.</p>'
+                        + '<div id="rewriteSeo" class="text-xs text-slate-400">Memeriksa SEO…</div>'
+                        + '<div class="flex flex-wrap gap-2 pt-1"><button type="button" onclick="window.location.reload()" class="bg-slate-700 hover:bg-slate-600 text-slate-100 font-bold px-3 py-1.5 rounded-lg text-xs transition">Muat Ulang Halaman</button></div>'
+                        + '</div>';
+                    box.innerHTML = html;
+                    box.classList.remove('hidden');
+                    box.scrollIntoView({{behavior: 'smooth', block: 'nearest'}});
+                    if (data.blogger_draft_error) showToast('Draf Blogger gagal dibuat: ' + data.blogger_draft_error, 'error');
+                    else showToast('Rewrite selesai: draf "' + data.title + '" (' + data.word_count + ' kata) tersimpan.');
+                    try {{
+                        const seoBox = document.getElementById('rewriteSeo');
+                        const pubRes = await fetch('/api/v1/publish/' + data.publication_id);
+                        if (!pubRes.ok) {{
+                            if (seoBox) seoBox.innerText = 'Cek SEO tidak dapat dimuat.';
+                        }} else {{
+                            const pub = await pubRes.json();
+                            const sel = document.getElementById('rewriteChannel');
+                            const opt = sel.options[sel.selectedIndex];
+                            const words = parseInt(opt ? opt.dataset.words : '', 10);
+                            const seoRes = await fetch('/api/v1/seo-check', {{
+                                method: 'POST',
+                                headers: {{ 'Content-Type': 'application/json' }},
+                                body: JSON.stringify({{title: pub.title || data.title, meta_description: pub.meta_description || '', content_html: pub.content_html || '', target_word_count: isNaN(words) ? 800 : words}})
+                            }});
+                            const seo = await seoRes.json();
+                            if (!seoRes.ok || !seoBox) {{
+                                if (seoBox) seoBox.innerText = 'Cek SEO tidak dapat dimuat.';
+                            }} else {{
+                                const passed = (seo.checks || []).filter((c) => c.passed).length;
+                                const total = (seo.checks || []).length;
+                                const failed = (seo.checks || []).filter((c) => !c.passed);
+                                const scoreCls = seo.score >= 80 ? 'text-emerald-400' : (seo.score >= 50 ? 'text-amber-400' : 'text-red-400');
+                                let seoHtml = '<div class="text-sm font-bold text-white">Skor SEO: <span class="' + scoreCls + '">' + seo.score + '/100</span> <span class="font-normal text-slate-400">(' + passed + ' dari ' + total + ' pemeriksaan lolos)</span></div>';
+                                if (failed.length) {{
+                                    seoHtml += '<ul class="mt-1 space-y-1">' + failed.map((c) => '<li class="text-red-400">❌ <span class="font-semibold text-slate-200">' + escapeHtml(c.label) + '</span> <span class="text-slate-400">— ' + escapeHtml(c.detail) + '</span></li>').join('') + '</ul>';
+                                }} else {{
+                                    seoHtml += '<div class="mt-1 text-emerald-400">Semua pemeriksaan SEO lolos.</div>';
+                                }}
+                                seoBox.innerHTML = seoHtml;
+                            }}
+                        }}
+                    }} catch (seoErr) {{
+                        const seoBox = document.getElementById('rewriteSeo');
+                        if (seoBox) seoBox.innerText = 'Cek SEO tidak dapat dimuat.';
                     }}
                 }} catch (err) {{
                     showToast('Error: ' + err, 'error');
