@@ -566,6 +566,16 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
         <main class="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <!-- Section: Dashboard (statistik + ringkasan) -->
             <section id="section-dashboard" class="nav-section space-y-6">
+            <details class="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl px-4 py-3 text-xs text-slate-300">
+                <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: Dashboard</summary>
+                <ul class="list-disc ml-5 mt-2 space-y-1.5">
+                    <li>Fungsi: ringkasan kondisi seluruh konektor dalam satu layar — jumlah blog terhubung, artikel terbit, draf menunggu, dan kunci API.</li>
+                    <li>Kartu kunjungan: angka "Total Kunjungan (30 hari)" diambil dari Blogger; di bawahnya ada rincian 7 hari terakhir dan sepanjang waktu.</li>
+                    <li>Tabel "Ringkasan Multi-Blog" membandingkan tiap blog — artikel terbit, draf, halaman statis, dan terakhir terbit.</li>
+                    <li>Tombol "Tulis Artikel" lompat ke menu Artikel; "Lihat Channel" lompat ke menu Channel.</li>
+                    <li>Catatan: angka kunjungan hanya total agregat per rentang — Blogger API tidak memberi rincian kunjungan per hari. Statistik diambil dari blog Blogger pertama yang terhubung.</li>
+                </ul>
+            </details>
             <!-- Stat Cards -->
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-5">
                 <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 relative overflow-hidden">
@@ -643,6 +653,17 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
 
             <!-- Section: Artikel (Tulis Artikel) -->
             <section id="section-artikel" class="nav-section space-y-6 hidden">
+            <details class="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl px-4 py-3 text-xs text-slate-300">
+                <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: Tulis Artikel</summary>
+                <ul class="list-disc ml-5 mt-2 space-y-1.5">
+                    <li>Fungsi: menulis artikel baru dan mengirimkannya ke blog sebagai draf atau langsung terbit.</li>
+                    <li>Cara pakai: pilih Blog, isi judul, slug (kosongkan bila ingin dibuat otomatis dari judul), labels pisah koma, dan meta description 140–160 karakter, lalu tulis konten dalam HTML. Klik "Simpan sebagai Draf" untuk menyimpan tanpa terbit, atau "Terbitkan" untuk langsung live. Isi "Jadwal Terbit" (WIB) bila ingin terbit otomatis pada waktu tertentu.</li>
+                    <li>Gambar: isi URL Gambar Sampul dan Alt Text, atau cari foto lewat "Cari Foto" (Image Picker — sumber utama Openverse, tanpa kunci). Gambar harus berupa URL yang sudah di-host — Blogger API tidak bisa mengunggah gambar.</li>
+                    <li>"Cek SEO" memeriksa 7 hal sebelum terbit: panjang judul 50–60 karakter, meta 140–160 karakter, jumlah kata sesuai target, ada gambar, semua gambar punya alt, ada subheading, dan ada tautan internal.</li>
+                    <li>"Optimasi SEO Draf": pilih draf lalu "Tampilkan Saran SEO" untuk saran meta description, slug, tautan internal, keterbacaan, dan alt text; klik "Terapkan SEO" untuk menyimpan saran. Catatan: meta description dan slug tersimpan di database konektor — untuk mengubah meta/URL yang live di Blogger, isi "Search Description" di editor Blogger.</li>
+                    <li>Tabel "Artikel Terjadwal" di bawah menampilkan artikel yang dijadwalkan dan akan terbit otomatis oleh Blogger pada waktunya.</li>
+                </ul>
+            </details>
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="mb-4">
                     <h2 class="text-lg font-bold text-white">Tulis Artikel</h2>
@@ -757,6 +778,15 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
 
             <!-- Section: Channel -->
             <section id="section-channel" class="nav-section space-y-6 hidden">
+            <details class="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl px-4 py-3 text-xs text-slate-300">
+                <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: Channel (Blog)</summary>
+                <ul class="list-disc ml-5 mt-2 space-y-1.5">
+                    <li>Fungsi: mendaftarkan dan mengelola blog (Blogger/Blogspot atau WordPress) yang menjadi tujuan artikel.</li>
+                    <li>Cara pakai: klik "+ Tambah Akun Blog", isi Channel ID yang unik, nama tampilan, niche, dan tone of voice. Untuk Blogger isi Client ID, Client Secret, Refresh Token, dan Blog ID — atau klik "Dapatkan Token via Web" untuk login Google dan mendapatkan token langsung di halaman web. Untuk WordPress isi URL, username, dan Application Password (dibuat di dashboard WP pada Users, Profile, Application Passwords).</li>
+                    <li>Tombol per baris: "Pengaturan" mengubah niche, tone, target kata, dan labels default channel; "Hubungkan Ulang" (Blogger saja) memperbarui token OAuth — token baru tersimpan otomatis; "Test" menguji koneksi ke Blogger; "Hapus" menghapus channel (konfirmasi dulu).</li>
+                    <li>Catatan: "Hapus" hanya menghapus channel dari konektor beserta riwayatnya di sini — artikel yang sudah terbit tetap ada di blog.</li>
+                </ul>
+            </details>
             <!-- Channels Section -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
@@ -790,6 +820,15 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
 
             <!-- Section: Halaman -->
             <section id="section-halaman" class="nav-section space-y-6 hidden">
+            <details class="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl px-4 py-3 text-xs text-slate-300">
+                <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: Halaman Statis</summary>
+                <ul class="list-disc ml-5 mt-2 space-y-1.5">
+                    <li>Fungsi: mengelola halaman statis blog di Blogger — seperti Tentang, Kontak, dan Kebijakan Privasi. Daftar halaman dibaca langsung dari Blogger.</li>
+                    <li>Cara pakai: isi Blog, Judul Halaman, dan Konten HTML di form "Tambah Halaman", lalu "Simpan sebagai Draf" atau "Terbitkan".</li>
+                    <li>Aksi per baris: "Buka Link" membuka halaman di blog; "Hapus" menghapus halaman dari Blogger (konfirmasi dulu).</li>
+                    <li>Catatan: tidak ada tombol edit — untuk mengubah halaman, hapus lalu buat ulang. Perhatian: Blogger tidak membebaskan alamat halaman yang dihapus, jadi halaman baru mendapat alamat bersuffix; hindari hapus-buat ulang untuk perbaikan kecil.</li>
+                </ul>
+            </details>
             <!-- Halaman Statis (Pages) -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="mb-4">
@@ -840,6 +879,14 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
 
             <!-- Section: API Key -->
             <section id="section-apikey" class="nav-section space-y-6 hidden">
+            <details class="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl px-4 py-3 text-xs text-slate-300">
+                <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: API Key</summary>
+                <ul class="list-disc ml-5 mt-2 space-y-1.5">
+                    <li>Fungsi: membuat kunci akses supaya AI Agent bisa memakai API konektor lewat header X-API-Key.</li>
+                    <li>Cara pakai: klik "+ Buat API Key Baru", beri nama agent, klik "Buat Kunci", lalu salin kuncinya dan simpan di tempat aman.</li>
+                    <li>Catatan penting: kunci lengkap hanya ditampilkan SATU KALI saat dibuat — sesudah itu hanya prefix-nya yang terlihat. Bila hilang, cabut kunci lama dengan tombol "Cabut" dan buat yang baru. Jangan bagikan kunci di chat atau tempat publik.</li>
+                </ul>
+            </details>
             <!-- AI Agent Key Management -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
@@ -874,6 +921,16 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
 
             <!-- Section: Pengaturan AI -->
             <section id="section-pengaturan-ai" class="nav-section space-y-6 hidden">
+            <details class="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl px-4 py-3 text-xs text-slate-300">
+                <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: Pengaturan AI</summary>
+                <ul class="list-disc ml-5 mt-2 space-y-1.5">
+                    <li>Fungsi: menyimpan kunci API pihak ketiga untuk fitur otomatis.</li>
+                    <li>Kunci Gemini: dipakai Auto-Rewrite (menu Ingest) dan Ide Topik. Buat gratis di Google AI Studio. Klik "Tes Kunci" untuk menguji kunci yang tersimpan — hasilnya langsung tampil beserta penyebabnya bila gagal.</li>
+                    <li>Kunci Pexels: dipakai Image Picker untuk mencari foto gratis; opsional — tanpa kunci Pexels, Image Picker tetap jalan memakai Openverse (lisensi CC).</li>
+                    <li>Catatan: kunci disimpan di database server dan tidak pernah ditampilkan lagi setelah disimpan — kosongkan kolom bila tidak ingin mengubahnya.</li>
+                    <li>Bila Tes Kunci gagal dengan pesan free tier tidak tersedia untuk proyek itu, free tier dikunci untuk proyek Google tersebut — kunci baru di proyek yang sama akan gagal juga; buat kunci di proyek Google baru, lengkapi verifikasi akun, atau pasang billing.</li>
+                </ul>
+            </details>
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="mb-4">
                     <h2 class="text-lg font-bold text-white">Pengaturan AI</h2>
@@ -907,6 +964,16 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
 
             <!-- Section: Riwayat -->
             <section id="section-riwayat" class="nav-section space-y-6 hidden">
+            <details class="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl px-4 py-3 text-xs text-slate-300">
+                <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: Riwayat Publikasi</summary>
+                <ul class="list-disc ml-5 mt-2 space-y-1.5">
+                    <li>Fungsi: melihat semua artikel yang pernah dikirim ke blog, beserta statusnya (Draf, Published, Terjadwal).</li>
+                    <li>Cara pakai: saring dengan tombol Semua / Draf / Published, atau cari berdasarkan judul di kolom pencarian.</li>
+                    <li>Aksi per baris: draf bisa Diterbitkan, Diedit, atau Dihapus; artikel yang sudah terbit hanya bisa Diedit — judul dan konten diperbarui di Blogger dan labels tetap terjaga.</li>
+                    <li>Tombol atas: "Terbitkan Semua Draf" menerbitkan semua draf pada blog yang dipilih sekaligus; "Export Backup" mengunduh cadangan semua data dalam format JSON (tanpa kredensial).</li>
+                    <li>Catatan: hanya 15 artikel pertama yang ditampilkan; klik "Muat lebih banyak" untuk melihat sisanya.</li>
+                </ul>
+            </details>
             <!-- Recent Publications -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="mb-4">
@@ -960,6 +1027,15 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
 
             <!-- Section: Penjadwal (auto-publish antrean terjadwal) -->
             <section id="section-penjadwal" class="nav-section space-y-6 hidden">
+            <details class="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl px-4 py-3 text-xs text-slate-300">
+                <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: Penjadwal — Auto-Publish</summary>
+                <ul class="list-disc ml-5 mt-2 space-y-1.5">
+                    <li>Fungsi: melihat status dan menjalankan antrean artikel terjadwal yang diterbitkan otomatis.</li>
+                    <li>Cara kerja: artikel terjadwal diterbitkan otomatis oleh Blogger pada waktunya — bukan oleh konektor. Tick di sini menyinkronkan statusnya dan menerbitkan yang terlewat, hanya untuk channel yang toggle auto-publish-nya aktif.</li>
+                    <li>Cara pakai: klik "Jalankan Tick Sekarang" untuk menjalankan tick secara manual; aktifkan toggle per channel di "Auto-Publish per Channel" hanya untuk blog yang memang boleh terbit otomatis.</li>
+                    <li>Catatan: tick tiap jam dijalankan GitHub Actions; cron Vercel jalan sekali sehari (08:00 WIB) sebagai pengaman karena paket Hobby hanya mengizinkan cron harian.</li>
+                </ul>
+            </details>
                 <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <div>
@@ -1009,6 +1085,16 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
 
             <!-- Section: Ide Topik -->
             <section id="section-ide-topik" class="nav-section space-y-6 hidden">
+            <details class="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl px-4 py-3 text-xs text-slate-300">
+                <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: Ide Topik</summary>
+                <ul class="list-disc ml-5 mt-2 space-y-1.5">
+                    <li>Fungsi: usulan judul artikel dari sinyal nyata — bukan dari niche channel.</li>
+                    <li>Sumber (tombol filter): Semua, Tren (berita populer Indonesia dari Google News), Search Console (kueri yang sudah mendapat impresi tapi CTR rendah), RSS (headline feed channel), Celah Blog (label yang baru punya 1 artikel, untuk pendalaman).</li>
+                    <li>Cara pakai: pilih blog lalu klik "Muat Ide"; atau ketik kata kunci bebas lalu "Cari Ide dari Kata Kunci" — ide diambil dari berita Google News tentang kata itu. Tiap ide punya skor 0–100 dan alasan yang menunjukkan seberapa kuat sinyalnya.</li>
+                    <li>Aksi per ide: "Buat Kerangka" membuat draf outline lengkap (judul, H2/H3, poin penting, kata kunci, label, meta description); "Buat Draf" membuat draf kerangka sederhana; "Buang" menyembunyikan ide itu.</li>
+                    <li>Catatan: ide yang sudah dipakai atau dibuang tidak muncul lagi. Gemini hanya memperkaya judul dan kerangka bila kuncinya berfungsi — tanpa kunci Gemini pun ide tetap dihasilkan dari data.</li>
+                </ul>
+            </details>
                 <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <div>
@@ -1037,6 +1123,16 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
 
             <!-- Section: Ingest (feed RSS + antrean rewrite) -->
             <section id="section-ingest" class="nav-section space-y-6 hidden">
+            <details class="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl px-4 py-3 text-xs text-slate-300">
+                <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: Ingest — Feed RSS dan Rewrite</summary>
+                <ul class="list-disc ml-5 mt-2 space-y-1.5">
+                    <li>Fungsi: mendaftarkan feed RSS per blog, mengambil item terbarunya, lalu menjadikannya bahan artikel.</li>
+                    <li>Cara pakai: isi Blog, URL Feed RSS, dan Judul Feed lalu klik "Tambah Feed"; klik "Ambil Sekarang" pada feed untuk mengambil item terbaru — URL yang sudah pernah diambil dilewati.</li>
+                    <li>Antrean bahan: tiap item punya "Jadikan Draf" (judul dan isi bahan dimasukkan ke form Tulis Artikel untuk ditulis ulang sendiri) dan "Rewrite jadi Draf" (menulis ulang otomatis memakai Gemini; hasilnya selalu disimpan sebagai draf lengkap dengan tautan atribusi ke sumber).</li>
+                    <li>Mode rewrite: Ringan (susunan kalimat diubah), Sedang (struktur dan contoh baru), Total (sudut pandang baru). Rewrite memakai kunci Gemini dari Pengaturan AI dan bisa memakan waktu 1–2 menit.</li>
+                    <li>Catatan: antrean ini hanya menyiapkan bahan — penulisan ulang dikerjakan AI agent supaya konten tetap orisinal, bukan spin mentah. Menonaktifkan feed tidak memblokir pengambilan manual lewat "Ambil Sekarang".</li>
+                </ul>
+            </details>
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="mb-4">
                     <h2 class="text-lg font-bold text-white">Ingest — Feed RSS & Antrean Rewrite</h2>
@@ -1128,6 +1224,14 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
 
             <!-- Section: Komentar (moderasi komentar Blogger) -->
             <section id="section-komentar" class="nav-section space-y-6 hidden">
+            <details class="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl px-4 py-3 text-xs text-slate-300">
+                <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: Komentar</summary>
+                <ul class="list-disc ml-5 mt-2 space-y-1.5">
+                    <li>Fungsi: memoderasi komentar blog dari Blogger tanpa membuka dashboard Blogger.</li>
+                    <li>Cara pakai: pilih blog, klik "Muat Komentar", lalu tiap komentar bisa "Setujui", ditandai "Spam", atau "Hapus".</li>
+                    <li>Catatan: perubahan langsung berlaku di Blogger; tombol "Spam" dan "Hapus" meminta konfirmasi dulu.</li>
+                </ul>
+            </details>
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="mb-4">
                     <h2 class="text-lg font-bold text-white">Komentar</h2>
