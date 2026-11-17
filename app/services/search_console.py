@@ -156,12 +156,12 @@ def _pick_site_url(entries, blog_url):
     return None
 
 
-def get_overview(channel, service_factory=None):
-    """Ambil ringkasan Search Console untuk satu channel.
+def _resolve_site(channel, service_factory=None):
+    """Bangun service Search Console + pilih siteUrl properti channel.
 
-    service_factory(credentials) -> service dipakai untuk menguji (mock).
-    Mengembalikan dict {site_url, connected, scope_ok, date_range,
-    top_queries[], totals{}, sitemaps[]}.
+    Dipakai bersama oleh get_overview() dan submit_sitemap() supaya
+    validasi kredensial, pemetaan error, dan pemilihan properti
+    tidak ditulis dua kali. Mengembalikan (service, site_url).
     """
     creds = channel.get_credentials()
     if not all(
@@ -193,6 +193,17 @@ def get_overview(channel, service_factory=None):
             "ditambahkan sebagai pengguna properti.",
             status_code=404,
         )
+    return service, site_url
+
+
+def get_overview(channel, service_factory=None):
+    """Ambil ringkasan Search Console untuk satu channel.
+
+    service_factory(credentials) -> service dipakai untuk menguji (mock).
+    Mengembalikan dict {site_url, connected, scope_ok, date_range,
+    top_queries[], totals{}, sitemaps[]}.
+    """
+    service, site_url = _resolve_site(channel, service_factory)
     # Data Search Console tertinggal 2-3 hari: jendela 28 hari yang
     # berakhir 3 hari lalu.
     end = datetime.date.today() - datetime.timedelta(days=DATA_LAG_DAYS)
@@ -260,3 +271,54 @@ def get_overview(channel, service_factory=None):
         },
         "sitemaps": sitemaps,
     }
+
+
+def submit_sitemap(channel, service_factory=None):
+    """Kirim sitemap blog ke Search Console (sitemaps().submit).
+
+    Sitemap Blogger (blog_url + "/sitemap.xml") diperbarui otomatis
+    setiap artikel terbit, jadi submit ulang memberi tahu Google ada
+    URL baru. Mengembalikan {ok, site_url, sitemap_url, submitted_at}.
+
+    Batasan yang harus dipahami — jangan berharap lebih dari ini:
+    Google TIDAK menyediakan API untuk tombol "Request Indexing" per
+    URL (itu hanya ada di website Search Console). Indexing API pun
+    hanya untuk halaman lowongan kerja / livestream, BUKAN artikel
+    blog. Jadi pengiriman sitemap adalah satu-satunya otomatisasi
+    submit yang didukung Google untuk blog.
+    """
+    service, site_url = _resolve_site(channel, service_factory)
+    sitemap_url = site_url.rstrip("/") + "/sitemap.xml"
+    try:
+        service.sitemaps().submit(siteUrl=site_url, feedpath=sitemap_url).execute()
+    except HttpError as e:
+        _http_error_to_sc_error(e)
+    except RefreshError as e:
+        _refresh_error_to_sc_error(e)
+    except SearchConsoleError:
+        raise
+    except Exception as e:
+        raise SearchConsoleError(f"Tidak dapat menghubungi Search Console: {e}")
+    return {
+        "ok": True,
+        "site_url": site_url,
+        "sitemap_url": sitemap_url,
+        "submitted_at": datetime.datetime.utcnow().isoformat(),
+    }
+
+
+def try_submit_sitemap(channel, service_factory=None):
+    """Submit sitemap tanpa pernah melempar exception — dipakai
+    auto-submit saat publish. Kegagalan submit TIDAK BOLEH
+    menggagalkan publish, jadi hasilnya dikembalikan sebagai info:
+    {"sitemap_submitted": bool, "note": str}."""
+    try:
+        result = submit_sitemap(channel, service_factory=service_factory)
+        return {
+            "sitemap_submitted": True,
+            "note": f"Sitemap {result['sitemap_url']} dikirim ke Search Console.",
+        }
+    except SearchConsoleError as e:
+        return {"sitemap_submitted": False, "note": str(e)}
+    except Exception as e:
+        return {"sitemap_submitted": False, "note": f"Tidak dapat mengirim sitemap: {e}"}

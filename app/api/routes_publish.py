@@ -10,6 +10,7 @@ from app.database import get_db
 from app.models import Channel, Publication
 from app.schemas import ArticleUpdate, PublishRequest, PublishBatchResponse, PublicationResult
 from app.services.platforms.blogger import BloggerPlatform
+from app.services.search_console import try_submit_sitemap
 from app.security import authenticate_agent_or_session
 
 router = APIRouter(prefix="/api/v1/publish", tags=["Publish / Distribusi Konten"])
@@ -240,6 +241,14 @@ def publish_articles(
                     pub_record.published_at = datetime.datetime.utcnow()
                     db.commit()
 
+                    # Auto-submit sitemap HANYA bila artikel benar-benar
+                    # terbit (bukan draf). Kegagalan submit tidak pernah
+                    # menggagalkan publish — try_submit_sitemap tidak
+                    # melempar exception, hasilnya hanya info.
+                    sc_info = None
+                    if not is_draft:
+                        sc_info = try_submit_sitemap(channel)
+
                     results.append(
                         PublicationResult(
                             channel_id=channel.id,
@@ -248,7 +257,8 @@ def publish_articles(
                             status="draft" if is_draft else "published",
                             title=item.title,
                             remote_post_id=res.remote_post_id,
-                            remote_url=res.remote_url
+                            remote_url=res.remote_url,
+                            search_console=sc_info
                         )
                     )
                     success_count += 1
@@ -371,7 +381,8 @@ def bulk_publish_drafts(
             pub.error_message = None
             db.commit()
             published += 1
-            results.append({"id": pub.id, "title": pub.title, "status": "published"})
+            results.append({"id": pub.id, "title": pub.title, "status": "published",
+                            "search_console": try_submit_sitemap(channel)})
         else:
             pub.error_message = res.error_message or "Gagal menerbitkan draf di Blogger."
             db.commit()
@@ -459,7 +470,8 @@ def publish_existing_draft(
         status="published",
         title=pub.title,
         remote_post_id=pub.remote_post_id,
-        remote_url=pub.remote_url
+        remote_url=pub.remote_url,
+        search_console=try_submit_sitemap(channel)
     )
 
 

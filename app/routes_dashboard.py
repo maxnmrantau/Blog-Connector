@@ -885,8 +885,10 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                         <div class="flex items-center gap-2">
                             <input type="password" id="geminiKeyInput" autocomplete="off" placeholder="AI... (kosongkan bila tidak diubah)" class="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
                             <span id="geminiBadge">{gemini_badge}</span>
+                            <button type="button" onclick="testGeminiKey(this)" title="Uji kunci Gemini yang tersimpan" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 font-bold px-3 py-2 rounded-xl text-xs transition whitespace-nowrap">🔑 Tes Kunci</button>
                         </div>
                         <p class="text-[11px] text-slate-500 mt-1">Dipakai Auto-Rewrite dan Ide Topik. Dapat dibuat gratis di Google AI Studio.</p>
+                        <div id="geminiTestResult" class="text-xs mt-2"></div>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Pexels API Key</label>
@@ -988,8 +990,10 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                             <select id="scChannelSelect" class="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"></select>
                             <button type="button" onclick="loadSearchConsole(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Muat Data</button>
                             <button type="button" onclick="reconnectScChannel()" title="Hubungkan ulang OAuth untuk blog yang dipilih — token baru tersimpan otomatis" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 font-bold px-4 py-2 rounded-xl text-xs transition">🔗 Hubungkan Ulang</button>
+                            <button type="button" onclick="submitSitemap(this)" title="Kirim sitemap blog ke Search Console" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 font-bold px-4 py-2 rounded-xl text-xs transition">📨 Kirim Sitemap</button>
                         </div>
                     </div>
+                    <p class="text-[11px] text-slate-500 mb-4">Catatan: Google tidak menyediakan API untuk tombol "Request Indexing" per URL — yang diotomatisasi di sini adalah pengiriman sitemap; sitemap Blogger diperbarui otomatis setiap artikel terbit, dan sitemap juga dikirim otomatis setiap ada artikel yang terbit.</p>
                     <details class="mb-4 bg-slate-800/60 border border-slate-700/80 rounded-xl px-4 py-3 text-xs text-slate-300">
                         <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: supaya data Search Console bisa tampil</summary>
                         <ol class="list-decimal ml-5 mt-2 space-y-1.5">
@@ -999,6 +1003,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                         </ol>
                     </details>
                     <div id="scContent" class="text-sm text-slate-400">Pilih blog lalu klik "Muat Data".</div>
+                    <div id="scSitemapResult" class="text-xs mt-3"></div>
                 </div>
             </section>
 
@@ -2047,6 +2052,29 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 }}
             }}
 
+            // Uji kunci Gemini yang tersimpan (POST /api/v1/settings/ai/test).
+            // Hasil tampil inline di bawah field Gemini: hijau bila kunci
+            // berfungsi, merah/amber dengan pesan jelas bila gagal.
+            async function testGeminiKey(btn) {{
+                const box = document.getElementById('geminiTestResult');
+                box.innerHTML = '<span class="text-slate-400">Menguji kunci Gemini…</span>';
+                if (btn) setBtnLoading(btn, true, 'Menguji…');
+                try {{
+                    const res = await fetch('/api/v1/settings/ai/test', {{ method: 'POST' }});
+                    const data = await res.json();
+                    if (res.ok && data.ok) {{
+                        box.innerHTML = '<div class="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-emerald-300">Kunci Gemini berfungsi — model ' + escapeHtml(data.model || '') + ' (' + (data.latency_ms || 0) + ' ms).</div>';
+                    }} else {{
+                        const msg = (data && data.error) || (data && data.detail) || 'Tes kunci gagal.';
+                        box.innerHTML = '<div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-amber-200">' + escapeHtml(msg) + '</div>';
+                    }}
+                }} catch (err) {{
+                    box.innerHTML = '<div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-amber-200">Error: ' + escapeHtml(String(err)) + '</div>';
+                }} finally {{
+                    if (btn) setBtnLoading(btn, false);
+                }}
+            }}
+
             // Tulis ulang bahan dari antrean memakai Gemini, simpan sebagai
             // draf (tidak pernah langsung terbit). Prosesnya bisa 1-2 menit.
             async function rewriteSourceAsDraft(sourceId, btn) {{
@@ -2497,6 +2525,31 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     box.innerHTML = html;
                 }} catch (err) {{
                     box.innerText = 'Error: ' + err;
+                }} finally {{
+                    if (btn) setBtnLoading(btn, false);
+                }}
+            }}
+
+            // Kirim sitemap blog ke Search Console (POST
+            // /api/v1/search-console/sitemap/submit). Hasil tampil inline
+            // di bawah kotak data. Bukan "Request Indexing" per URL —
+            // Google tidak menyediakan API untuk itu.
+            async function submitSitemap(btn) {{
+                const box = document.getElementById('scSitemapResult');
+                const channelId = document.getElementById('scChannelSelect').value;
+                if (!channelId) {{ showToast('Pilih blog dulu.', 'error'); return; }}
+                box.innerHTML = '<span class="text-slate-400">Mengirim sitemap…</span>';
+                if (btn) setBtnLoading(btn, true, 'Mengirim…');
+                try {{
+                    const res = await fetch('/api/v1/search-console/sitemap/submit?channel_id=' + encodeURIComponent(channelId), {{ method: 'POST' }});
+                    const data = await res.json();
+                    if (res.ok && data.ok) {{
+                        box.innerHTML = '<div class="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-emerald-300">Sitemap terkirim: <span class="font-mono">' + escapeHtml(data.sitemap_url || '') + '</span></div>';
+                    }} else {{
+                        box.innerHTML = '<div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-amber-200">' + escapeHtml(data.detail || 'Gagal mengirim sitemap.') + '</div>';
+                    }}
+                }} catch (err) {{
+                    box.innerHTML = '<div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-amber-200">Error: ' + escapeHtml(String(err)) + '</div>';
                 }} finally {{
                     if (btn) setBtnLoading(btn, false);
                 }}

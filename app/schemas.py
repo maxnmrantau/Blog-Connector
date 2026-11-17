@@ -127,6 +127,10 @@ class PublicationResult(BaseModel):
     remote_post_id: Optional[str] = None
     remote_url: Optional[str] = None
     error_message: Optional[str] = None
+    # Info auto-submit sitemap ke Search Console (hanya bila artikel
+    # berhasil terbit; None untuk draf/gagal). Tidak pernah menggagalkan
+    # publish: {"sitemap_submitted": bool, "note": str}.
+    search_console: Optional[dict] = None
 
 class PublishBatchResponse(BaseModel):
     total: int

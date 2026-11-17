@@ -23,6 +23,7 @@ import json
 
 from app.models import Channel, Publication
 from app.services.platforms.blogger import BloggerPlatform
+from app.services.search_console import try_submit_sitemap
 from app.services.settings import get_setting_value, set_setting_value
 
 WIB = datetime.timezone(datetime.timedelta(hours=7))
@@ -78,11 +79,13 @@ def get_status(db):
     }
 
 
-def run_tick(db, driver_factory=None):
+def run_tick(db, driver_factory=None, sc_factory=None):
     """Jalankan satu tick: proses semua publikasi scheduled yang jatuh tempo.
 
     driver_factory(channel_id, credentials) -> driver dipakai untuk
     menguji (mock). Default: BloggerPlatform asli.
+    sc_factory(credentials) -> service Search Console, dipakai untuk
+    menguji auto-submit sitemap (mock). Default: service asli.
     Mengembalikan ringkasan {tick_at, due, published, already_live,
     skipped, failed, details[]}.
     """
@@ -171,12 +174,15 @@ def run_tick(db, driver_factory=None):
                 pub.remote_url = live["url"]
             pub.error_message = None
             counts["already_live"] += 1
+            sc_info = try_submit_sitemap(channel, service_factory=sc_factory)
             details.append(
                 {
                     "publication_id": pub.id,
                     "title": pub.title,
                     "action": "already_live",
                     "reason": "Blogger sudah menerbitkan otomatis; status DB disinkronkan.",
+                    "sitemap_submitted": sc_info["sitemap_submitted"],
+                    "sitemap_note": sc_info["note"],
                 }
             )
             continue
@@ -189,12 +195,15 @@ def run_tick(db, driver_factory=None):
                 pub.remote_url = res.remote_url
             pub.error_message = None
             counts["published"] += 1
+            sc_info = try_submit_sitemap(channel, service_factory=sc_factory)
             details.append(
                 {
                     "publication_id": pub.id,
                     "title": pub.title,
                     "action": "published",
                     "reason": "Diterbitkan sekarang lewat publish_draft.",
+                    "sitemap_submitted": sc_info["sitemap_submitted"],
+                    "sitemap_note": sc_info["note"],
                 }
             )
         else:
