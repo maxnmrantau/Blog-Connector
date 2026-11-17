@@ -404,9 +404,12 @@ def publish_existing_draft(
     auth: dict = Depends(authenticate_agent_or_session)
 ):
     """
-    Menerbitkan draf yang sudah ada tanpa membuat postingan baru.
-    Memakai Blogger posts().publish() pada remote_post_id yang tersimpan,
-    jadi tidak ada duplikat di Blogger.
+    Menerbitkan draf atau artikel terjadwal yang sudah ada tanpa membuat
+    postingan baru. Memakai Blogger posts().publish() pada remote_post_id
+    yang tersimpan, jadi tidak ada duplikat di Blogger. Artikel
+    terjadwal di Blogger pada dasarnya adalah draf dengan publishDate
+    di masa depan, jadi posts().publish() tanpa publishDate langsung
+    menerbitkannya sekarang (jadwalnya dibatalkan).
     """
     pub = db.query(Publication).filter(Publication.id == publication_id).first()
     if not pub:
@@ -433,9 +436,9 @@ def publish_existing_draft(
             error_message=message
         )
 
-    if pub.status != "draft":
+    if pub.status not in ("draft", "scheduled"):
         return _failed(
-            "Hanya draf yang bisa diterbitkan. "
+            "Hanya draf dan artikel terjadwal yang bisa diterbitkan. "
             f"Status publikasi ini adalah '{pub.status}'."
         )
 
@@ -457,6 +460,7 @@ def publish_existing_draft(
         return _failed(res.error_message or "Gagal menerbitkan draf di Blogger.")
 
     pub.status = "published"
+    pub.scheduled_at = None
     pub.published_at = datetime.datetime.utcnow()
     if res.remote_url:
         pub.remote_url = res.remote_url
@@ -482,9 +486,12 @@ def delete_publication(
     auth: dict = Depends(authenticate_agent_or_session)
 ):
     """
-    Menghapus sebuah draf: hapus postingannya di Blogger (kalau ada
-    remote_post_id) lalu hapus rekamannya di database. Hanya draf yang
-    boleh dihapus dari sini; artikel yang sudah published harus dihapus
+    Menghapus sebuah draf atau artikel terjadwal: hapus postingannya
+    di Blogger (kalau ada remote_post_id) lalu hapus rekamannya di
+    database. Artikel terjadwal di Blogger pada dasarnya adalah draf
+    dengan publishDate di masa depan, jadi posts().delete() berlaku
+    untuknya seperti draf biasa. Hanya draf/terjadwal yang boleh
+    dihapus dari sini; artikel yang sudah published harus dihapus
     langsung di Blogger supaya tidak terhapus tanpa sengaja.
     """
     pub = db.query(Publication).filter(Publication.id == publication_id).first()
@@ -494,12 +501,12 @@ def delete_publication(
             detail=f"Publikasi dengan id {publication_id} tidak ditemukan."
         )
 
-    if pub.status != "draft":
+    if pub.status not in ("draft", "scheduled"):
         raise HTTPException(
             status_code=400,
             detail=(
-                "Hanya draf yang bisa dihapus dari sini. Artikel yang sudah "
-                "published harus dihapus langsung di Blogger."
+                "Hanya draf dan artikel terjadwal yang bisa dihapus dari sini. "
+                "Artikel yang sudah published harus dihapus langsung di Blogger."
             )
         )
 

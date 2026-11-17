@@ -250,12 +250,21 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
         stats_html = '<div class="text-sm text-amber-400">Statistik belum tersedia — gagal mengambil data kunjungan dari Blogger.</div>'
     else:
         stats_html = f"""
-        <div class="text-3xl font-extrabold text-white">{stats_30}</div>
-        <div class="text-xs text-slate-400 mt-2">Total kunjungan 30 hari terakhir · {html_escape(stats_channel.name)}</div>
-        <div class="mt-4 space-y-1 text-sm">
-            <div class="flex justify-between border-t border-slate-800 pt-2"><span class="text-slate-400">7 hari terakhir</span><span class="font-semibold text-slate-200">{stats_7}</span></div>
-            <div class="flex justify-between border-t border-slate-800 pt-2"><span class="text-slate-400">Sepanjang waktu</span><span class="font-semibold text-slate-200">{stats_all}</span></div>
+        <div class="grid grid-cols-3 gap-3">
+            <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl px-4 py-3">
+                <div class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">7 hari terakhir</div>
+                <div class="text-2xl font-extrabold text-white mt-1">{stats_7}</div>
+            </div>
+            <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl px-4 py-3">
+                <div class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">30 hari terakhir</div>
+                <div class="text-2xl font-extrabold text-white mt-1">{stats_30}</div>
+            </div>
+            <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl px-4 py-3">
+                <div class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Sepanjang waktu</div>
+                <div class="text-2xl font-extrabold text-white mt-1">{stats_all}</div>
+            </div>
         </div>
+        <div class="text-xs text-slate-400 mt-3">Blog: {html_escape(stats_channel.name)}</div>
         """
     page_counts = {}
     page_rows = ""
@@ -441,6 +450,14 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 <button onclick="deletePublication({p.id}, this)" class="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 px-2 py-1 rounded border border-red-500/30 transition">Hapus</button>
             </div>
             """
+        elif p.status == 'scheduled':
+            actions = f"""
+            <div class="flex gap-1 justify-end">
+                <button onclick="publishDraft({p.id}, this)" class="text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded border border-emerald-500/30 transition">Terbitkan Sekarang</button>
+                <button onclick="openEditPublication(this)" data-id="{p.id}" data-title="{html_escape(p.title or '', quote=True)}" data-content="{html_escape(p.content_html or '', quote=True)}" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-2 py-1 rounded border border-slate-700 transition">Edit</button>
+                <button onclick="deletePublication({p.id}, this)" class="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 px-2 py-1 rounded border border-red-500/30 transition">Hapus</button>
+            </div>
+            """
         else:
             actions = f"""
             <div class="flex gap-1 justify-end">
@@ -498,7 +515,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
             <td class="py-3 px-3 sm:px-4 text-xs font-mono text-slate-400">{sp.channel_id}</td>
             <td class="py-3 px-3 sm:px-4 text-xs text-slate-300">{sched_str} WIB</td>
             <td class="py-3 px-3 sm:px-4"><span class="px-2 py-0.5 rounded text-xs bg-sky-500/10 text-sky-400 border border-sky-500/30">Terjadwal</span></td>
-            <td class="py-3 px-3 sm:px-4 text-right">{sched_link}</td>
+            <td class="py-3 px-3 sm:px-4 text-right"><div class="flex gap-1 justify-end items-center flex-wrap"><button onclick="publishDraft({sp.id}, this)" class="text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded border border-emerald-500/30 transition whitespace-nowrap">🚀 Terbitkan Sekarang</button><button onclick="deletePublication({sp.id}, this)" class="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 px-2 py-1 rounded border border-red-500/30 transition whitespace-nowrap">🗑️ Hapus</button>{sched_link}</div></td>
         </tr>
         """
     if not scheduled_pubs:
@@ -585,7 +602,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: Dashboard</summary>
                 <ul class="list-disc ml-5 mt-2 space-y-1.5">
                     <li>Fungsi: ringkasan kondisi seluruh konektor dalam satu layar — jumlah blog terhubung, artikel terbit, draf menunggu, dan kunci API.</li>
-                    <li>Kartu kunjungan: angka "Total Kunjungan (30 hari)" diambil dari Blogger; di bawahnya ada rincian 7 hari terakhir dan sepanjang waktu.</li>
+                    <li>Kartu kunjungan: tiga angka dari Blogger — 7 hari terakhir, 30 hari terakhir, dan sepanjang waktu.</li>
                     <li>Tabel "Ringkasan Multi-Blog" membandingkan tiap blog — artikel terbit, draf, halaman statis, dan terakhir terbit.</li>
                     <li>Tombol "Tulis Artikel" lompat ke menu Artikel; "Lihat Channel" lompat ke menu Channel.</li>
                     <li>Catatan: angka kunjungan hanya total agregat per rentang — Blogger API tidak memberi rincian kunjungan per hari. Statistik diambil dari blog Blogger pertama yang terhubung.</li>
@@ -622,7 +639,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
 
             <!-- Kartu Statistik Kunjungan (Blogger pageViews, agregat per rentang) -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-                <div class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Total Kunjungan (30 hari)</div>
+                <div class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Kunjungan per Periode</div>
                 {stats_html}
                 <p class="text-[11px] text-slate-500 mt-4">Blogger API hanya memberi total agregat per rentang — tidak ada rincian kunjungan per hari.</p>
             </div>
@@ -676,7 +693,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     <li>Gambar: isi URL Gambar Sampul dan Alt Text, atau cari foto lewat "Cari Foto" (Image Picker — sumber utama Openverse, tanpa kunci). Gambar harus berupa URL yang sudah di-host — Blogger API tidak bisa mengunggah gambar.</li>
                     <li>"Cek SEO" memeriksa 7 hal sebelum terbit: panjang judul 50–60 karakter, meta 140–160 karakter, jumlah kata sesuai target, ada gambar, semua gambar punya alt, ada subheading, dan ada tautan internal.</li>
                     <li>"Optimasi SEO Draf": pilih draf lalu "Tampilkan Saran SEO" untuk saran meta description, slug, tautan internal, keterbacaan, dan alt text; klik "Terapkan SEO" untuk menyimpan saran. Catatan: meta description dan slug tersimpan di database konektor — untuk mengubah meta/URL yang live di Blogger, isi "Search Description" di editor Blogger.</li>
-                    <li>Tabel "Artikel Terjadwal" di bawah menampilkan artikel yang dijadwalkan dan akan terbit otomatis oleh Blogger pada waktunya.</li>
+                    <li>Tabel "Artikel Terjadwal" di bawah menampilkan artikel yang dijadwalkan dan akan terbit otomatis oleh Blogger pada waktunya; tiap baris punya tombol "Terbitkan Sekarang" (terbit langsung, jadwal dibatalkan) dan "Hapus" (batalkan jadwal dan hapus dari Blogger).</li>
                 </ul>
             </details>
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
@@ -764,7 +781,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                                 <th class="py-3 px-3 sm:px-4">Blog</th>
                                 <th class="py-3 px-3 sm:px-4">Jadwal Terbit</th>
                                 <th class="py-3 px-3 sm:px-4">Status</th>
-                                <th class="py-3 px-3 sm:px-4 text-right">Link</th>
+                                <th class="py-3 px-3 sm:px-4 text-right">Aksi</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -940,8 +957,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 <summary class="cursor-pointer font-semibold text-slate-100">📖 Panduan: Pengaturan AI</summary>
                 <ul class="list-disc ml-5 mt-2 space-y-1.5">
                     <li>Fungsi: menyimpan kunci API pihak ketiga untuk fitur otomatis.</li>
-                    <li>Kunci Gemini: dipakai Auto-Rewrite (menu Ingest) dan Ide Topik. Buat gratis di Google AI Studio. Klik "Tes Kunci" untuk menguji kunci yang tersimpan — hasilnya langsung tampil beserta penyebabnya bila gagal.</li>
-                    <li>Provider AI: pilih Gemini atau OpenAI pada dropdown di bawah — provider ini dipakai Auto-Rewrite dan Ide Topik. Bila provider OpenAI dipilih tapi kuncinya belum diisi, fitur AI akan error dengan pesan yang jelas.</li>
+                    <li>Kunci Gemini & Provider AI: pilih Gemini atau OpenAI pada dropdown di bawah — provider ini dipakai Auto-Rewrite dan Ide Topik. Kunci Gemini dibuat gratis di Google AI Studio; klik "Tes Kunci" untuk menguji kunci yang tersimpan (hasil + penyebab bila gagal langsung tampil). Bila provider OpenAI dipilih tapi kuncinya belum diisi, fitur AI akan error dengan pesan yang jelas.</li>
                     <li>Kunci OpenAI: dibuat di platform.openai.com (API Keys). OpenAI berbayar dari token pertama — tidak ada free tier, butuh saldo/billing. Model default gpt-4o-mini: $0,15/1 jt token input, $0,60/1 jt output; satu artikel ±800 kata kurang dari $0,001. Tidak ada model gpt-4o-nano — yang paling murah gpt-5-nano ($0,05/$0,40).</li>
                     <li>Kunci Pexels: dipakai Image Picker untuk mencari foto gratis; opsional — tanpa kunci Pexels, Image Picker tetap jalan memakai Openverse (lisensi CC).</li>
                     <li>Catatan: kunci disimpan di database server dan tidak pernah ditampilkan lagi setelah disimpan — kosongkan kolom bila tidak ingin mengubahnya.</li>
@@ -1784,17 +1800,17 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
             }}
 
             async function deletePublication(pubId, btn) {{
-                const ok = await askConfirm('Hapus draf?', 'Draf ini akan dihapus dari Blogger dan dari riwayat. Tindakan ini tidak bisa dibatalkan.');
+                const ok = await askConfirm('Hapus artikel ini?', 'Artikel ini akan dihapus dari Blogger dan dari riwayat. Tindakan ini tidak bisa dibatalkan.');
                 if (!ok) return;
                 setBtnLoading(btn, true, 'Menghapus…');
                 try {{
                     const res = await fetch(`/api/v1/publish/${{pubId}}`, {{ method: 'DELETE' }});
                     const data = await res.json();
                     if (res.ok) {{
-                        showToast('Draf berhasil dihapus.' + (data.blogger_error ? ' Catatan: ' + data.blogger_error : ''));
+                        showToast('Artikel berhasil dihapus.' + (data.blogger_error ? ' Catatan: ' + data.blogger_error : ''));
                         setTimeout(() => window.location.reload(), 800);
                     }} else {{
-                        showToast('Gagal menghapus draf: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                        showToast('Gagal menghapus artikel: ' + (data.detail || 'Terjadi kesalahan'), 'error');
                     }}
                 }} catch (err) {{
                     showToast('Error: ' + err, 'error');
