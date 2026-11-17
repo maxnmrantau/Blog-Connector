@@ -32,7 +32,7 @@ def startup_event():
         print(f"⚠️ Database init warning (non-fatal): {e}")
 
 # Registrasi Router
-from app.api import routes_channels, routes_ingest, routes_publish, routes_pages, routes_auth, routes_feeds, routes_seo, routes_stats, routes_comments, routes_backup
+from app.api import routes_channels, routes_ingest, routes_publish, routes_pages, routes_auth, routes_feeds, routes_seo, routes_stats, routes_comments, routes_backup, routes_settings, routes_rewrite, routes_images, routes_scheduler, routes_search_console, routes_topics
 from app import routes_dashboard, routes_oauth
 
 app.include_router(routes_dashboard.router)
@@ -47,6 +47,13 @@ app.include_router(routes_seo.router)
 app.include_router(routes_stats.router)
 app.include_router(routes_comments.router)
 app.include_router(routes_backup.router)
+app.include_router(routes_settings.router)
+app.include_router(routes_rewrite.router)
+app.include_router(routes_seo.router_optimize)
+app.include_router(routes_images.router)
+app.include_router(routes_scheduler.router)
+app.include_router(routes_search_console.router)
+app.include_router(routes_topics.router)
 
 @app.get("/")
 def root(request: Request):

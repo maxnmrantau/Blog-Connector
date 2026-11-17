@@ -20,6 +20,7 @@ class ChannelUpdate(BaseModel):
     tone_of_voice: Optional[str] = None
     target_word_count: Optional[int] = Field(default=None, gt=0)
     default_labels: Optional[str] = None
+    auto_publish: Optional[bool] = None
 
 
 class ChannelResponse(BaseModel):
@@ -33,6 +34,7 @@ class ChannelResponse(BaseModel):
     tone_of_voice: Optional[str]
     target_word_count: int
     default_labels: Optional[str]
+    auto_publish: bool = False
     created_at: datetime
 
     class Config:

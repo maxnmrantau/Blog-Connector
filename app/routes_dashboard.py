@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import ArticleSource, Channel, FeedSource, Publication, ApiKey
 from app.services.platforms.blogger import BloggerPlatform
+from app.services.settings import get_setting_value
 from app.security import (
     verify_admin_password,
     create_session_token,
@@ -37,6 +38,14 @@ def _rel_time(dt):
     if seconds < 604800:
         return f"{seconds // 86400} hari lalu"
     return ""
+
+
+def _ai_key_badge(configured):
+    """Badge status kunci AI (hanya boolean, nilai kunci tidak pernah
+    dirender ke halaman)."""
+    if configured:
+        return '<span class="px-2 py-0.5 rounded text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Terkonfigurasi</span>'
+    return '<span class="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-400 border border-amber-500/30">Belum diisi</span>'
 
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, error: str = None):
@@ -134,6 +143,12 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
     # supaya angka di kartu statistik selalu benar.
     total_published = db.query(Publication).filter(Publication.status == "published").count()
     total_drafts = db.query(Publication).filter(Publication.status == "draft").count()
+
+    # Status kunci AI untuk section Pengaturan AI (hanya boolean, bukan nilai).
+    gemini_configured = bool(get_setting_value(db, "gemini_api_key"))
+    pexels_configured = bool(get_setting_value(db, "pexels_api_key"))
+    gemini_badge = _ai_key_badge(gemini_configured)
+    pexels_badge = _ai_key_badge(pexels_configured)
 
     # Buat baris tabel channel
     channel_rows = ""
@@ -311,6 +326,15 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
     if not channels:
         article_channel_options = '<option value="">Belum ada channel — tambahkan dulu</option>'
 
+    # Opsi dropdown draf untuk kartu Optimasi SEO (maks 30 draf terbaru).
+    seo_drafts = db.query(Publication).filter(
+        Publication.status == "draft").order_by(
+        Publication.created_at.desc()).limit(30).all()
+    seo_draft_options = "".join(
+        f'<option value="{p.id}">{html_escape(p.title)}</option>'
+        for p in seo_drafts
+    ) or '<option value="">Belum ada draf</option>'
+
     # Opsi dropdown channel untuk form tambah feed (semua channel).
     feed_channel_options = ""
     for ch in channels:
@@ -357,7 +381,10 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
             <td class="py-3 px-3 sm:px-4">{link_btn}</td>
             <td class="py-3 px-3 sm:px-4 text-xs text-slate-400">{date_str}</td>
             <td class="py-3 px-3 sm:px-4 text-right">
-                <button onclick="useSourceAsDraft({s.id}, this)" class="text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded border border-emerald-500/30 transition">Jadikan Draf</button>
+                <div class="flex gap-1 justify-end">
+                    <button onclick="useSourceAsDraft({s.id}, this)" class="text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded border border-emerald-500/30 transition">Jadikan Draf</button>
+                    <button onclick="rewriteSourceAsDraft({s.id}, this)" class="text-xs bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-2 py-1 rounded transition">✨ Rewrite jadi Draf</button>
+                </div>
             </td>
         </tr>
         """
@@ -498,6 +525,10 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 <button type="button" data-section="ingest" onclick="showSection('ingest')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">📥 Ingest</button>
                 <button type="button" data-section="komentar" onclick="showSection('komentar')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">💬 Komentar</button>
                 <button type="button" data-section="apikey" onclick="showSection('apikey')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">🔑 API Key</button>
+                <button type="button" data-section="pengaturan-ai" onclick="showSection('pengaturan-ai')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">🤖 Pengaturan AI</button>
+                <button type="button" data-section="penjadwal" onclick="showSection('penjadwal')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">⏰ Penjadwal</button>
+                <button type="button" data-section="search-console" onclick="showSection('search-console')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">🔍 Search Console</button>
+                <button type="button" data-section="ide-topik" onclick="showSection('ide-topik')" class="nav-item w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2.5 text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent">💡 Ide Topik</button>
             </nav>
             <div class="p-4 border-t border-slate-800 text-xs text-slate-500">
                 Blog Konektor v1.0.0<br>Multi-Channel AI Content Engine
@@ -652,6 +683,18 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                             <input type="text" id="articleImageAlt" placeholder="Deskripsi singkat gambar untuk SEO & aksesibilitas" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
                         </div>
                     </div>
+                    <div class="border border-slate-800 rounded-xl p-3 space-y-2">
+                        <div class="flex flex-wrap gap-2 items-end">
+                            <div class="flex-1 min-w-[180px]">
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Cari Foto (Image Picker)</label>
+                                <input type="text" id="imageSearchQuery" placeholder="misal: menggambar digital" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            </div>
+                            <button type="button" onclick="searchImages('article', this)" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 font-bold px-4 py-2 rounded-xl text-xs transition border border-slate-700">🔍 Cari Foto</button>
+                        </div>
+                        <p class="text-[11px] text-slate-500">Sumber utama Openverse (tanpa kunci, lisensi CC — cantumkan atribusi). Bila kunci Pexels terisi di Pengaturan AI, hasil Pexels ikut muncul (landscape 1200x675).</p>
+                        <div id="imageSearchResults-article" class="grid grid-cols-2 sm:grid-cols-4 gap-2"></div>
+                        <div id="imageSearchInfo-article" class="text-[11px] text-slate-500"></div>
+                    </div>
                     <p class="text-[11px] text-slate-500">Gambar sampul harus berupa URL yang sudah di-host (misal di Blogger/Drive/CDN) — Blogger API tidak bisa mengunggah gambar. Gambar akan disisipkan di awal artikel.</p>
                     <div>
                         <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Konten HTML</label>
@@ -691,6 +734,22 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                         </tbody>
                     </table>
                 </div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="mb-4">
+                    <h2 class="text-lg font-bold text-white">Optimasi SEO Draf</h2>
+                    <p class="text-xs text-slate-400">Pilih draf untuk melihat saran SEO otomatis: meta description, slug, tautan internal, keterbacaan, dan alt text. Tidak ada yang berubah sampai kamu klik "Terapkan SEO". Catatan: meta description dan slug tersimpan di database konektor — untuk mengubah meta/URL live di Blogger, isi "Search Description" di editor Blogger.</p>
+                </div>
+                <div class="flex flex-wrap gap-3 items-end mb-4">
+                    <div class="flex-1 min-w-[200px]">
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Draf</label>
+                        <select id="seoDraftSelect" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            {seo_draft_options}
+                        </select>
+                    </div>
+                    <button type="button" onclick="loadSeoSuggestions(this)" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 font-bold px-4 py-2 rounded-xl text-xs transition border border-slate-700">🔍 Tampilkan Saran SEO</button>
+                </div>
+                <div id="seoOptimizeResult" class="hidden mt-2"></div>
             </div>
             </section>
 
@@ -811,6 +870,37 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
             </div>
             </section>
 
+            <!-- Section: Pengaturan AI -->
+            <section id="section-pengaturan-ai" class="nav-section space-y-6 hidden">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="mb-4">
+                    <h2 class="text-lg font-bold text-white">Pengaturan AI</h2>
+                    <p class="text-xs text-slate-400">Kunci API untuk fitur otomatis: Gemini dipakai Auto-Rewrite dan Ide Topik, Pexels dipakai Image Picker. Kunci disimpan di database server dan tidak pernah ditampilkan lagi setelah disimpan — kosongkan kolom bila tidak ingin mengubahnya.</p>
+                </div>
+                <div class="space-y-4 max-w-xl">
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Gemini API Key</label>
+                        <div class="flex items-center gap-2">
+                            <input type="password" id="geminiKeyInput" autocomplete="off" placeholder="AI... (kosongkan bila tidak diubah)" class="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            <span id="geminiBadge">{gemini_badge}</span>
+                        </div>
+                        <p class="text-[11px] text-slate-500 mt-1">Dipakai Auto-Rewrite dan Ide Topik. Dapat dibuat gratis di Google AI Studio.</p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Pexels API Key</label>
+                        <div class="flex items-center gap-2">
+                            <input type="password" id="pexelsKeyInput" autocomplete="off" placeholder="Kosongkan bila tidak diubah" class="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            <span id="pexelsBadge">{pexels_badge}</span>
+                        </div>
+                        <p class="text-[11px] text-slate-500 mt-1">Dipakai Image Picker untuk mencari foto gratis. Dibuat di pexels.com/api.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" onclick="saveAiSettings(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Simpan Pengaturan AI</button>
+                    </div>
+                </div>
+            </div>
+            </section>
+
             <!-- Section: Riwayat -->
             <section id="section-riwayat" class="nav-section space-y-6 hidden">
             <!-- Recent Publications -->
@@ -862,6 +952,60 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     <button id="loadMorePubs" type="button" onclick="showMorePubs()" class="text-xs font-semibold text-emerald-400 hover:text-emerald-300 px-4 py-2 rounded-xl border border-emerald-500/30 hover:bg-emerald-500/10 transition">Muat lebih banyak</button>
                 </div>
             </div>
+            </section>
+
+            <!-- Section: Penjadwal (auto-publish antrean terjadwal) -->
+            <section id="section-penjadwal" class="nav-section space-y-6 hidden">
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                        <div>
+                            <h2 class="text-lg font-bold text-white">⏰ Penjadwal — Auto-Publish</h2>
+                            <p class="text-xs text-slate-400 mt-1">Artikel terjadwal di Blogger sudah diterbitkan otomatis oleh Blogger pada waktunya (publishDate). Tick di sini menyinkronkan statusnya dan menerbitkan yang terlewat — hanya untuk channel yang toggle-nya aktif. Cron Vercel menjalankan tick tiap jam.</p>
+                        </div>
+                        <button type="button" onclick="runTickNow(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">▶ Jalankan Tick Sekarang</button>
+                    </div>
+                    <div id="schedulerStatus" class="text-sm text-slate-400">Memuat status scheduler…</div>
+                    <div id="schedulerDue" class="mt-4"></div>
+                </div>
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6">
+                    <h3 class="text-base font-bold text-white mb-1">Auto-Publish per Channel</h3>
+                    <p class="text-xs text-slate-400 mb-4">Aktifkan hanya untuk channel yang memang boleh terbit otomatis saat jadwalnya tiba.</p>
+                    <div id="schedulerChannels" class="space-y-2 text-sm text-slate-400">Memuat channel…</div>
+                </div>
+            </section>
+
+            <!-- Section: Search Console -->
+            <section id="section-search-console" class="nav-section space-y-6 hidden">
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                        <div>
+                            <h2 class="text-lg font-bold text-white">🔍 Search Console</h2>
+                            <p class="text-xs text-slate-400 mt-1">Kueri teratas (28 hari terakhir) + sitemap dari Google Search Console. Butuh OAuth dengan scope Search Console — bila belum, hubungkan ulang.</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <select id="scChannelSelect" class="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"></select>
+                            <button type="button" onclick="loadSearchConsole(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Muat Data</button>
+                        </div>
+                    </div>
+                    <div id="scContent" class="text-sm text-slate-400">Pilih blog lalu klik "Muat Data".</div>
+                </div>
+            </section>
+
+            <!-- Section: Ide Topik -->
+            <section id="section-ide-topik" class="nav-section space-y-6 hidden">
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                        <div>
+                            <h2 class="text-lg font-bold text-white">💡 Ide Topik</h2>
+                            <p class="text-xs text-slate-400 mt-1">Usulan judul dari headline feed channel + niche. Bila kunci Gemini terisi di Pengaturan AI, judul dibuat AI; kalau tidak, dipakai mode kata kunci. "Buat Draf" membuat draf kerangka (judul + H2).</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <select id="topicChannelSelect" class="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"></select>
+                            <button type="button" onclick="loadTopicIdeas(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Muat Ide</button>
+                        </div>
+                    </div>
+                    <div id="topicIdeas" class="text-sm text-slate-400">Pilih blog lalu klik "Muat Ide".</div>
+                </div>
             </section>
 
             <!-- Section: Ingest (feed RSS + antrean rewrite) -->
@@ -917,7 +1061,24 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div class="mb-4">
                     <h2 class="text-lg font-bold text-white">Antrean Bahan — Hasil Fetch Terbaru</h2>
-                    <p class="text-xs text-slate-400">Item terbaru dari feed yang sudah diambil. Klik "Jadikan Draf" untuk memasukkan bahan ke form Tulis Artikel, lalu tulis ulang dengan bahasamu sendiri sebelum diterbitkan.</p>
+                    <p class="text-xs text-slate-400">Item terbaru dari feed yang sudah diambil. Klik "Jadikan Draf" untuk memasukkan bahan ke form Tulis Artikel dan menulis ulang sendiri, atau "Rewrite jadi Draf" untuk menulis ulang otomatis memakai Gemini — hasilnya selalu disimpan sebagai draf, lengkap dengan tautan atribusi ke sumber.</p>
+                </div>
+                <div class="flex flex-wrap items-end gap-3 mb-4">
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Blog untuk rewrite</label>
+                        <select id="rewriteChannel" class="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            {article_channel_options}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Mode rewrite</label>
+                        <select id="rewriteMode" class="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            <option value="ringan">Ringan — susunan kalimat diubah</option>
+                            <option value="sedang" selected>Sedang — struktur + contoh baru</option>
+                            <option value="total">Total — sudut pandang baru</option>
+                        </select>
+                    </div>
+                    <p class="text-[11px] text-slate-500">Rewrite memakai kunci Gemini dari Pengaturan AI dan bisa memakan waktu 1–2 menit.</p>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
@@ -1145,6 +1306,18 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                             <label class="block font-semibold uppercase tracking-wider text-slate-400 mb-1">Alt Text Gambar</label>
                             <input type="text" id="editPubImageAlt" placeholder="Deskripsi singkat gambar" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 focus:ring-2 focus:ring-emerald-500">
                         </div>
+                    </div>
+                    <div class="border border-slate-800 rounded-xl p-3 space-y-2">
+                        <div class="flex flex-wrap gap-2 items-end">
+                            <div class="flex-1 min-w-[180px]">
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Cari Foto (Image Picker)</label>
+                                <input type="text" id="editImageSearchQuery" placeholder="misal: menggambar digital" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-emerald-500">
+                            </div>
+                            <button type="button" onclick="searchImages('edit', this)" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 font-bold px-4 py-2 rounded-xl text-xs transition border border-slate-700">🔍 Cari Foto</button>
+                        </div>
+                        <p class="text-[11px] text-slate-500">Sumber utama Openverse (tanpa kunci, lisensi CC — cantumkan atribusi). Bila kunci Pexels terisi di Pengaturan AI, hasil Pexels ikut muncul (landscape 1200x675).</p>
+                        <div id="imageSearchResults-edit" class="grid grid-cols-2 sm:grid-cols-4 gap-2"></div>
+                        <div id="imageSearchInfo-edit" class="text-[11px] text-slate-500"></div>
                     </div>
                     <p class="text-[11px] text-slate-500">Gambar sampul harus berupa URL yang sudah di-host (misal di Blogger/Drive/CDN) — Blogger API tidak bisa mengunggah gambar. Gambar akan disisipkan di awal artikel, menggantikan gambar sampul lama bila ada.</p>
                     <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
@@ -1819,8 +1992,74 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 }}
             }}
 
+            // Simpan kunci API AI (Gemini / Pexels). Hanya kolom yang
+            // diisi yang dikirim; kolom kosong berarti tidak diubah.
+            async function saveAiSettings(btn) {{
+                const gemini = document.getElementById('geminiKeyInput').value.trim();
+                const pexels = document.getElementById('pexelsKeyInput').value.trim();
+                if (!gemini && !pexels) {{
+                    showToast('Tidak ada kunci yang diisi — kosongkan bila tidak ingin mengubah.', 'error');
+                    return;
+                }}
+                const payload = {{}};
+                if (gemini) payload.gemini_api_key = gemini;
+                if (pexels) payload.pexels_api_key = pexels;
+                setBtnLoading(btn, true, 'Menyimpan…');
+                try {{
+                    const res = await fetch('/api/v1/settings/ai', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify(payload)
+                    }});
+                    const data = await res.json();
+                    if (res.ok) {{
+                        showToast('Pengaturan AI tersimpan.');
+                        setTimeout(() => window.location.reload(), 800);
+                    }} else {{
+                        showToast('Gagal: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            // Tulis ulang bahan dari antrean memakai Gemini, simpan sebagai
+            // draf (tidak pernah langsung terbit). Prosesnya bisa 1-2 menit.
+            async function rewriteSourceAsDraft(sourceId, btn) {{
+                const channelId = document.getElementById('rewriteChannel').value;
+                const mode = document.getElementById('rewriteMode').value || 'sedang';
+                if (!channelId) {{
+                    showToast('Pilih dulu blog untuk rewrite.', 'error');
+                    return;
+                }}
+                setBtnLoading(btn, true, 'Merewrite…');
+                try {{
+                    const res = await fetch('/api/v1/rewrite', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{channel_id: channelId, source_id: sourceId, mode: mode}})
+                    }});
+                    const data = await res.json();
+                    if (res.ok) {{
+                        let msg = 'Rewrite selesai: draf "' + data.title + '" (' + data.word_count + ' kata) tersimpan.';
+                        if (data.similarity_warning) msg += ' Peringatan: hasil terlalu mirip sumber (' + Math.round(data.similarity * 100) + '%).';
+                        if (data.blogger_draft_error) msg += ' Draf Blogger gagal dibuat: ' + data.blogger_draft_error;
+                        showToast(msg);
+                        setTimeout(() => window.location.reload(), 1200);
+                    }} else {{
+                        showToast('Gagal rewrite: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
             // --- Navigasi sidebar (tampilkan satu section saja) ---
-            const SECTION_TITLES = {{dashboard: 'Dashboard', channel: 'Channel', artikel: 'Artikel', halaman: 'Halaman', riwayat: 'Riwayat', ingest: 'Ingest', komentar: 'Komentar', apikey: 'API Key'}};
+            const SECTION_TITLES = {{dashboard: 'Dashboard', channel: 'Channel', artikel: 'Artikel', halaman: 'Halaman', riwayat: 'Riwayat', ingest: 'Ingest', komentar: 'Komentar', apikey: 'API Key', 'pengaturan-ai': 'Pengaturan AI', penjadwal: 'Penjadwal', 'search-console': 'Search Console', 'ide-topik': 'Ide Topik'}};
             function showSection(name) {{
                 document.querySelectorAll('.nav-section').forEach((s) => s.classList.add('hidden'));
                 const target = document.getElementById('section-' + name);
@@ -1832,6 +2071,9 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 const title = document.getElementById('topbarTitle');
                 if (title) title.innerText = SECTION_TITLES[name] || 'Dashboard';
                 try {{ localStorage.setItem('bk_section', name); }} catch (e) {{}}
+                if (name === 'penjadwal') {{ loadSchedulerStatus(); }}
+                if (name === 'search-console') {{ loadScChannels(); }}
+                if (name === 'ide-topik') {{ loadTopicChannels(); }}
                 toggleSidebar(false);
                 window.scrollTo(0, 0);
             }}
@@ -1939,6 +2181,93 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 }}
             }}
 
+            function escapeHtml(s) {{
+                return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            }}
+
+            // Tampilkan saran SEO otomatis untuk draf yang dipilih (tanpa mengubah apa pun).
+            async function loadSeoSuggestions(btn) {{
+                const pubId = document.getElementById('seoDraftSelect').value;
+                if (!pubId) {{
+                    showToast('Belum ada draf yang bisa dioptimasi.', 'error');
+                    return;
+                }}
+                setBtnLoading(btn, true, 'Memuat…');
+                try {{
+                    const res = await fetch('/api/v1/seo-optimize', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{publication_id: parseInt(pubId, 10)}})
+                    }});
+                    const data = await res.json();
+                    if (!res.ok) {{
+                        showToast('Gagal: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                        return;
+                    }}
+                    const box = document.getElementById('seoOptimizeResult');
+                    let linksHtml = '';
+                    if (data.internal_links && data.internal_links.length) {{
+                        linksHtml = data.internal_links.map((l) => '<label class="flex items-start gap-2 text-xs text-slate-300 py-1"><input type="checkbox" class="seo-link-check mt-0.5" value="' + l.publication_id + '" checked> <span><a href="' + l.url + '" target="_blank" class="text-emerald-400 hover:underline">' + escapeHtml(l.anchor) + '</a> <span class="text-slate-500">(' + l.score + ' kata kunci cocok: ' + escapeHtml((l.matched_keywords || []).join(', ')) + ')</span></span></label>').join('');
+                    }} else {{
+                        linksHtml = '<p class="text-xs text-slate-500">Tidak ada kandidat tautan internal (butuh artikel published lain di blog yang sama dengan kata kunci yang sama).</p>';
+                    }}
+                    let altsHtml = '';
+                    if (data.alt_suggestions && data.alt_suggestions.length) {{
+                        altsHtml = '<ul class="list-disc pl-5">' + data.alt_suggestions.map((a) => '<li class="text-xs text-slate-300 py-1">Gambar: <span class="font-mono text-slate-400">' + escapeHtml(a.src) + '</span><br>Saran alt: <span class="text-emerald-400">' + escapeHtml(a.suggested_alt) + '</span></li>').join('') + '</ul>';
+                    }} else {{
+                        altsHtml = '<p class="text-xs text-slate-500">Semua gambar sudah punya alt text.</p>';
+                    }}
+                    const r = data.readability || {{}};
+                    box.innerHTML = '<div class="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3">'
+                        + '<div><div class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Meta description saran (' + (data.meta_description || '').length + ' karakter)</div><p class="text-xs text-slate-200">' + escapeHtml(data.meta_description || '(tidak bisa dibuat — isi terlalu pendek)') + '</p><label class="flex items-center gap-2 text-xs text-slate-300 mt-1"><input type="checkbox" id="seoApplyMeta" checked> Terapkan meta description</label></div>'
+                        + '<div><div class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Slug saran</div><p class="text-xs text-slate-200 font-mono">' + escapeHtml(data.slug || '-') + '</p><label class="flex items-center gap-2 text-xs text-slate-300 mt-1"><input type="checkbox" id="seoApplySlug" checked> Terapkan slug</label></div>'
+                        + '<div><div class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Keterbacaan: ' + escapeHtml(r.label || '-') + ' (' + (r.score == null ? '-' : r.score) + '/100)</div><p class="text-xs text-slate-400">Rata-rata ' + (r.avg_sentence_words == null ? '-' : r.avg_sentence_words) + ' kata/kalimat · ' + (r.avg_paragraph_words == null ? '-' : r.avg_paragraph_words) + ' kata/paragraf · ' + (r.sentence_count == null ? '-' : r.sentence_count) + ' kalimat</p></div>'
+                        + '<div><div class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Tautan internal (pilih yang mau disisipkan sebagai "Baca juga")</div>' + linksHtml + '</div>'
+                        + '<div><div class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Alt text gambar</div>' + altsHtml + '<label class="flex items-center gap-2 text-xs text-slate-300 mt-1"><input type="checkbox" id="seoApplyAlts" checked> Terapkan saran alt text</label></div>'
+                        + '<div class="flex flex-wrap gap-2"><button type="button" onclick="applySeo(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Terapkan SEO</button></div>'
+                        + '</div>';
+                    box.classList.remove('hidden');
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            // Terapkan saran SEO yang dipilih pada draf (hanya saat diklik).
+            async function applySeo(btn) {{
+                const pubId = document.getElementById('seoDraftSelect').value;
+                if (!pubId) {{
+                    showToast('Belum ada draf yang dipilih.', 'error');
+                    return;
+                }}
+                const linkIds = Array.from(document.querySelectorAll('.seo-link-check:checked')).map((c) => parseInt(c.value, 10));
+                const applyMeta = document.getElementById('seoApplyMeta') ? document.getElementById('seoApplyMeta').checked : true;
+                const applySlug = document.getElementById('seoApplySlug') ? document.getElementById('seoApplySlug').checked : true;
+                const applyAlts = document.getElementById('seoApplyAlts') ? document.getElementById('seoApplyAlts').checked : true;
+                setBtnLoading(btn, true, 'Menerapkan…');
+                try {{
+                    const res = await fetch('/api/v1/seo-optimize/' + pubId + '/apply', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{link_ids: linkIds, apply_meta: applyMeta, apply_slug: applySlug, apply_alts: applyAlts}})
+                    }});
+                    const data = await res.json();
+                    if (res.ok) {{
+                        let msg = 'SEO diterapkan: ' + data.links_inserted + ' tautan disisipkan, ' + data.alts_fixed + ' alt diperbaiki.';
+                        if (data.blogger_error) msg += ' Catatan: ' + data.blogger_error;
+                        showToast(msg);
+                        setTimeout(() => window.location.reload(), 1000);
+                    }} else {{
+                        showToast('Gagal menerapkan SEO: ' + (data.detail || 'Terjadi kesalahan'), 'error');
+                    }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
             // --- Tulis Artikel (pakai endpoint publish yang sudah ada) ---
             async function handleWriteArticle(status, btn) {{
                 const channelId = document.getElementById('articleChannel').value;
@@ -1980,6 +2309,216 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     }} else {{
                         showToast('Gagal: ' + ((result && result.error_message) || data.detail || 'Terjadi kesalahan'), 'error');
                     }}
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            // --- Image Picker (Openverse utama, Pexels bila ada kunci) ---
+            async function searchImages(target, btn) {{
+                const qInput = document.getElementById(target === 'edit' ? 'editImageSearchQuery' : 'imageSearchQuery');
+                const query = qInput.value.trim();
+                if (!query) {{ showToast('Isi dulu kata kunci foto yang dicari.', 'error'); return; }}
+                const box = document.getElementById('imageSearchResults-' + target);
+                const info = document.getElementById('imageSearchInfo-' + target);
+                setBtnLoading(btn, true, 'Mencari…');
+                try {{
+                    const res = await fetch('/api/v1/images/search?q=' + encodeURIComponent(query) + '&per_page=8');
+                    const data = await res.json();
+                    if (!res.ok) {{ showToast('Gagal mencari foto: ' + (data.detail || 'Terjadi kesalahan'), 'error'); return; }}
+                    if (!data.results || !data.results.length) {{
+                        box.innerHTML = '';
+                        info.innerText = 'Tidak ada foto yang cocok — coba kata kunci lain.';
+                        return;
+                    }}
+                    box.innerHTML = data.results.map((r) => '<button type="button" onclick="pickImage(\\'' + target + '\\', this)" data-url="' + escapeHtml(r.url || '') + '" data-alt="' + escapeHtml(r.suggested_alt || '') + '" data-attribution="' + escapeHtml(r.attribution || '') + '" class="block text-left border border-slate-700 rounded-xl overflow-hidden hover:border-emerald-500 transition"><img src="' + escapeHtml(r.thumbnail_url || r.url || '') + '" alt="' + escapeHtml(r.suggested_alt || '') + '" class="w-full h-20 object-cover"><span class="block px-2 py-1 text-[10px] text-slate-400 truncate">' + escapeHtml(r.photographer || r.source || '') + ' · ' + escapeHtml(r.license || '') + '</span></button>').join('');
+                    let note = 'Sumber: ' + (data.sources || []).join(', ') + '. ';
+                    if (data.pexels_error) note += 'Pexels: ' + data.pexels_error + ' ';
+                    if (data.openverse_error) note += 'Openverse: ' + data.openverse_error;
+                    info.innerText = note;
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            function pickImage(target, btn) {{
+                const url = btn.dataset.url || '';
+                const alt = btn.dataset.alt || '';
+                const attribution = btn.dataset.attribution || '';
+                if (target === 'edit') {{
+                    document.getElementById('editPubImageUrl').value = url;
+                    document.getElementById('editPubImageAlt').value = alt;
+                }} else {{
+                    document.getElementById('articleImageUrl').value = url;
+                    document.getElementById('articleImageAlt').value = alt;
+                }}
+                const info = document.getElementById('imageSearchInfo-' + target);
+                if (info && attribution) info.innerText = 'Atribusi (wajib dicantumkan bila lisensi CC mengharuskan): ' + attribution;
+                showToast('Foto dipilih sebagai sampul — URL dan alt text sudah terisi.');
+            }}
+
+            // --- Penjadwal (auto-publish) ---
+            async function loadSchedulerStatus() {{
+                const statusBox = document.getElementById('schedulerStatus');
+                const dueBox = document.getElementById('schedulerDue');
+                const chBox = document.getElementById('schedulerChannels');
+                try {{
+                    const res = await fetch('/api/v1/scheduler/status');
+                    const data = await res.json();
+                    if (!res.ok) {{ statusBox.innerText = 'Gagal memuat status: ' + (data.detail || 'Terjadi kesalahan'); return; }}
+                    const last = data.last_result;
+                    let html = '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">';
+                    html += '<div class="bg-slate-800 rounded-xl p-3"><div class="text-[11px] uppercase tracking-wider text-slate-400">Tick terakhir</div><div class="font-bold text-white text-xs mt-1">' + escapeHtml(data.last_tick ? data.last_tick.replace('T', ' ').slice(0, 19) : 'belum pernah') + '</div></div>';
+                    html += '<div class="bg-slate-800 rounded-xl p-3"><div class="text-[11px] uppercase tracking-wider text-slate-400">Jatuh tempo</div><div class="font-bold text-white">' + (data.due_count || 0) + '</div></div>';
+                    html += '<div class="bg-slate-800 rounded-xl p-3"><div class="text-[11px] uppercase tracking-wider text-slate-400">Terbit tick lalu</div><div class="font-bold text-white">' + (last ? ((last.published || 0) + (last.already_live || 0)) : '-') + '</div></div>';
+                    html += '<div class="bg-slate-800 rounded-xl p-3"><div class="text-[11px] uppercase tracking-wider text-slate-400">Gagal tick lalu</div><div class="font-bold text-white">' + (last ? (last.failed || 0) : '-') + '</div></div></div>';
+                    if (!data.cron_configured) html += '<p class="mt-3 text-amber-400 text-xs">⚠️ CRON_SECRET belum diatur di Vercel — cron otomatis tiap jam tidak akan berjalan. Tick manual dari tombol di atas tetap bisa dipakai.</p>';
+                    statusBox.innerHTML = html;
+                    if (data.due && data.due.length) {{
+                        dueBox.innerHTML = '<h4 class="text-sm font-bold text-white mb-2">Antrean jatuh tempo</h4>' + data.due.map((d) => '<div class="flex flex-wrap items-center justify-between gap-2 bg-slate-800 rounded-xl px-3 py-2 mb-2 text-xs"><span class="text-slate-200">' + escapeHtml(d.title || '') + '</span><span class="text-slate-400">' + escapeHtml(d.scheduled_at ? d.scheduled_at.replace('T', ' ').slice(0, 16) : '') + ' · ' + (d.auto_publish ? 'auto-publish aktif' : 'auto-publish mati') + '</span></div>').join('');
+                    }} else {{
+                        dueBox.innerHTML = '<p class="text-xs text-slate-500">Tidak ada publikasi terjadwal yang jatuh tempo.</p>';
+                    }}
+                    const chRes = await fetch('/api/v1/channels');
+                    const channels = await chRes.json();
+                    if (!chRes.ok || !Array.isArray(channels)) {{ chBox.innerText = 'Gagal memuat channel.'; return; }}
+                    chBox.innerHTML = channels.map((c) => '<label class="flex items-center justify-between gap-3 bg-slate-800 rounded-xl px-3 py-2.5 cursor-pointer"><span><span class="text-slate-100 font-semibold">' + escapeHtml(c.name || c.id) + '</span> <span class="text-slate-500 text-xs">(' + escapeHtml(c.id || '') + ')</span></span><input type="checkbox" data-id="' + escapeHtml(c.id || '') + '" ' + (c.auto_publish ? 'checked' : '') + ' onchange="toggleAutoPublish(this)" class="w-5 h-5 accent-emerald-500"></label>').join('');
+                }} catch (err) {{
+                    statusBox.innerText = 'Error: ' + err;
+                }}
+            }}
+
+            async function runTickNow(btn) {{
+                setBtnLoading(btn, true, 'Menjalankan…');
+                try {{
+                    const res = await fetch('/api/v1/scheduler/tick', {{method: 'POST'}});
+                    const data = await res.json();
+                    if (!res.ok) {{ showToast('Tick gagal: ' + (data.detail || 'Terjadi kesalahan'), 'error'); return; }}
+                    showToast('Tick selesai: ' + (data.published || 0) + ' diterbitkan, ' + (data.already_live || 0) + ' sudah live, ' + (data.skipped || 0) + ' dilewati, ' + (data.failed || 0) + ' gagal.');
+                    loadSchedulerStatus();
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            async function toggleAutoPublish(checkbox) {{
+                const channelId = checkbox.dataset.id || '';
+                try {{
+                    const res = await fetch('/api/v1/channels/' + encodeURIComponent(channelId), {{method: 'PATCH', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{auto_publish: checkbox.checked}})}});
+                    const data = await res.json();
+                    if (!res.ok) {{ checkbox.checked = !checkbox.checked; showToast('Gagal mengubah toggle: ' + (data.detail || 'Terjadi kesalahan'), 'error'); return; }}
+                    showToast('Auto-publish ' + (checkbox.checked ? 'diaktifkan' : 'dimatikan') + ' untuk ' + (data.name || channelId) + '.');
+                    loadSchedulerStatus();
+                }} catch (err) {{
+                    checkbox.checked = !checkbox.checked;
+                    showToast('Error: ' + err, 'error');
+                }}
+            }}
+
+            // --- Search Console ---
+            async function loadScChannels() {{
+                const sel = document.getElementById('scChannelSelect');
+                if (sel.options.length) return;
+                try {{
+                    const res = await fetch('/api/v1/channels');
+                    const channels = await res.json();
+                    if (!res.ok || !Array.isArray(channels)) return;
+                    sel.innerHTML = channels.map((c) => '<option value="' + escapeHtml(c.id || '') + '">' + escapeHtml(c.name || c.id) + '</option>').join('');
+                }} catch (err) {{}}
+            }}
+
+            async function loadSearchConsole(btn) {{
+                const box = document.getElementById('scContent');
+                const channelId = document.getElementById('scChannelSelect').value;
+                if (!channelId) {{ showToast('Pilih blog dulu.', 'error'); return; }}
+                if (btn) setBtnLoading(btn, true, 'Memuat…');
+                try {{
+                    const res = await fetch('/api/v1/search-console/overview?channel_id=' + encodeURIComponent(channelId));
+                    const data = await res.json();
+                    if (!res.ok) {{
+                        let html = '<div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-xs text-amber-200">' + escapeHtml(data.detail || 'Terjadi kesalahan') + '</div>';
+                        if (res.status === 403) html += '<div class="mt-3"><a href="/oauth/blogger" class="inline-block bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition">🔗 Hubungkan Ulang OAuth</a><p class="text-[11px] text-slate-500 mt-2">Di halaman OAuth, login dengan akun Google yang sama lalu salin refresh token baru ke form channel. Pastikan juga API Google Search Console sudah diaktifkan di Google Cloud.</p></div>';
+                        box.innerHTML = html;
+                        return;
+                    }}
+                    const t = data.totals || {{}};
+                    let html = '<p class="text-xs text-slate-400 mb-3">Properti: <span class="text-emerald-400 font-mono">' + escapeHtml(data.site_url || '') + '</span> · ' + escapeHtml((data.date_range || {{}}).start || '') + ' s/d ' + escapeHtml((data.date_range || {{}}).end || '') + '</p>';
+                    html += '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">';
+                    html += '<div class="bg-slate-800 rounded-xl p-3"><div class="text-[11px] uppercase tracking-wider text-slate-400">Klik</div><div class="font-bold text-white text-lg">' + Math.round(t.clicks || 0) + '</div></div>';
+                    html += '<div class="bg-slate-800 rounded-xl p-3"><div class="text-[11px] uppercase tracking-wider text-slate-400">Impresi</div><div class="font-bold text-white text-lg">' + Math.round(t.impressions || 0) + '</div></div>';
+                    html += '<div class="bg-slate-800 rounded-xl p-3"><div class="text-[11px] uppercase tracking-wider text-slate-400">CTR rata-rata</div><div class="font-bold text-white text-lg">' + ((t.avg_ctr || 0) * 100).toFixed(2) + '%</div></div>';
+                    html += '<div class="bg-slate-800 rounded-xl p-3"><div class="text-[11px] uppercase tracking-wider text-slate-400">Posisi rata-rata</div><div class="font-bold text-white text-lg">' + (t.avg_position || 0).toFixed(1) + '</div></div></div>';
+                    if (data.top_queries && data.top_queries.length) {{
+                        html += '<h4 class="text-sm font-bold text-white mb-2">Kueri teratas</h4><div class="overflow-x-auto mb-4"><table class="w-full text-left border-collapse text-xs"><thead><tr class="border-b border-slate-800 uppercase tracking-wider text-slate-400"><th class="py-2 px-2">Kueri</th><th class="py-2 px-2">Klik</th><th class="py-2 px-2">Impresi</th><th class="py-2 px-2">CTR</th><th class="py-2 px-2">Posisi</th></tr></thead><tbody>';
+                        html += data.top_queries.map((q) => '<tr class="border-b border-slate-800/60"><td class="py-2 px-2 text-slate-100">' + escapeHtml(q.query || '') + '</td><td class="py-2 px-2">' + Math.round(q.clicks || 0) + '</td><td class="py-2 px-2">' + Math.round(q.impressions || 0) + '</td><td class="py-2 px-2">' + ((q.ctr || 0) * 100).toFixed(2) + '%</td><td class="py-2 px-2">' + (q.position || 0).toFixed(1) + '</td></tr>').join('');
+                        html += '</tbody></table></div>';
+                    }} else {{
+                        html += '<p class="text-xs text-slate-500 mb-4">Belum ada data kueri pada periode ini (blog baru / belum terindeks — data Search Console tertinggal 2–3 hari).</p>';
+                    }}
+                    if (data.sitemaps && data.sitemaps.length) {{
+                        html += '<h4 class="text-sm font-bold text-white mb-2">Sitemap</h4>' + data.sitemaps.map((s) => '<div class="bg-slate-800 rounded-xl px-3 py-2 mb-2 text-xs"><span class="text-slate-100 font-mono">' + escapeHtml(s.path || '') + '</span><span class="text-slate-400"> · ' + (s.isPending ? 'menunggu diproses' : 'diproses') + ' · warning ' + (s.warnings || 0) + ' · error ' + (s.errors || 0) + '</span></div>').join('');
+                    }} else {{
+                        html += '<p class="text-xs text-slate-500">Belum ada sitemap yang disubmit ke Search Console untuk properti ini.</p>';
+                    }}
+                    box.innerHTML = html;
+                }} catch (err) {{
+                    box.innerText = 'Error: ' + err;
+                }} finally {{
+                    if (btn) setBtnLoading(btn, false);
+                }}
+            }}
+
+            // --- Ide Topik ---
+            let topicIdeas = [];
+            async function loadTopicChannels() {{
+                const sel = document.getElementById('topicChannelSelect');
+                if (sel.options.length) return;
+                try {{
+                    const res = await fetch('/api/v1/channels');
+                    const channels = await res.json();
+                    if (!res.ok || !Array.isArray(channels)) return;
+                    sel.innerHTML = channels.map((c) => '<option value="' + escapeHtml(c.id || '') + '">' + escapeHtml(c.name || c.id) + '</option>').join('');
+                }} catch (err) {{}}
+            }}
+
+            async function loadTopicIdeas(btn) {{
+                const box = document.getElementById('topicIdeas');
+                const channelId = document.getElementById('topicChannelSelect').value;
+                if (!channelId) {{ showToast('Pilih blog dulu.', 'error'); return; }}
+                if (btn) setBtnLoading(btn, true, 'Memuat…');
+                try {{
+                    const res = await fetch('/api/v1/topics/ideas?channel_id=' + encodeURIComponent(channelId));
+                    const data = await res.json();
+                    if (!res.ok) {{ box.innerHTML = '<div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-xs text-amber-200">' + escapeHtml(data.detail || 'Terjadi kesalahan') + '</div>'; return; }}
+                    topicIdeas = data.ideas || [];
+                    let html = '<p class="text-xs text-slate-400 mb-3">' + (data.ai_used ? '🤖 Judul dibuat Gemini AI' : '🔑 Judul berbasis kata kunci (tanpa AI)') + ' · ' + (data.headline_count || 0) + ' headline dipakai · niche: ' + escapeHtml(data.niche || '') + '</p>';
+                    if (data.ai_error) html += '<p class="text-[11px] text-amber-400 mb-3">AI gagal (' + escapeHtml(data.ai_error) + ') — dipakai fallback kata kunci.</p>';
+                    if (!topicIdeas.length) {{ box.innerHTML = html + '<p class="text-xs text-slate-500">Belum ada ide — tambahkan feed RSS di seksi Ingest dulu.</p>'; return; }}
+                    html += topicIdeas.map((idea, i) => '<div class="bg-slate-800 rounded-xl p-3 mb-2"><div class="flex flex-wrap items-start justify-between gap-2"><div class="flex-1 min-w-[200px]"><p class="text-sm font-semibold text-slate-100">' + escapeHtml(idea.title || '') + '</p><p class="text-xs text-slate-400 mt-1">' + escapeHtml(idea.angle || '') + '</p><p class="text-[11px] text-slate-500 mt-1">' + (idea.keywords || []).map((k) => '#' + escapeHtml(k)).join(' ') + (idea.source_title ? ' · sumber: ' + escapeHtml(idea.source_title) : '') + '</p></div><button type="button" onclick="createTopicDraft(' + i + ', this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-3 py-1.5 rounded-xl text-xs transition whitespace-nowrap">✏️ Buat Draf</button></div></div>').join('');
+                    box.innerHTML = html;
+                }} catch (err) {{
+                    box.innerText = 'Error: ' + err;
+                }} finally {{
+                    if (btn) setBtnLoading(btn, false);
+                }}
+            }}
+
+            async function createTopicDraft(index, btn) {{
+                const idea = topicIdeas[index];
+                if (!idea) return;
+                const channelId = document.getElementById('topicChannelSelect').value;
+                setBtnLoading(btn, true, 'Membuat…');
+                try {{
+                    const res = await fetch('/api/v1/topics/draft', {{method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{channel_id: channelId, title: idea.title, angle: idea.angle, keywords: idea.keywords, source_id: idea.source_id, source_url: idea.source_url, source_title: idea.source_title}})}});
+                    const data = await res.json();
+                    if (!res.ok) {{ showToast('Gagal membuat draf: ' + (data.detail || 'Terjadi kesalahan'), 'error'); return; }}
+                    showToast('Draf kerangka dibuat: ' + (data.title || '') + ' (id ' + data.publication_id + '). Lengkapi di seksi Artikel.');
                 }} catch (err) {{
                     showToast('Error: ' + err, 'error');
                 }} finally {{

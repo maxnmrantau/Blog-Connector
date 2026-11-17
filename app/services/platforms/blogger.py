@@ -132,6 +132,52 @@ class BloggerPlatform(BaseBlogPlatform):
                 error_message=f"Terjadi kesalahan saat menerbitkan draf di Blogger: {str(e)}"
             )
 
+    def get_post_status(self, post_id: str) -> Dict[str, Any]:
+        """Baca status live sebuah postingan (LIVE / DRAFT / SCHEDULED).
+
+        Dipakai scheduler tick untuk memutuskan apakah draf terjadwal
+        sudah diterbitkan Blogger secara otomatis (publishDate) atau
+        masih perlu diterbitkan manual lewat publish_draft().
+        Mengembalikan dict {success, status, url, error_message}.
+        """
+        blog_id = self.credentials.get("blog_id")
+        if not blog_id:
+            return {
+                "success": False,
+                "status": None,
+                "url": None,
+                "error_message": "blog_id belum ditentukan pada profil akun Blogger ini.",
+            }
+
+        try:
+            service = self._get_service()
+            response = service.posts().get(
+                blogId=str(blog_id),
+                postId=str(post_id),
+                fields="status,url",
+            ).execute()
+            return {
+                "success": True,
+                "status": response.get("status"),
+                "url": response.get("url"),
+                "error_message": None,
+            }
+        except HttpError as error:
+            error_details = error.error_details if hasattr(error, 'error_details') else str(error)
+            return {
+                "success": False,
+                "status": None,
+                "url": None,
+                "error_message": f"Google Blogger API Error [{error.status_code}]: {error_details}",
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "status": None,
+                "url": None,
+                "error_message": f"Terjadi kesalahan saat memeriksa status postingan: {str(e)}",
+            }
+
     def update_post(
         self,
         post_id: str,

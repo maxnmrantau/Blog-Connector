@@ -5,6 +5,12 @@
       "use": "@vercel/python"
     }
   ],
+  "crons": [
+    {
+      "path": "/api/v1/scheduler/tick",
+      "schedule": "0 * * * *"
+    }
+  ],
   "routes": [
     {
       "src": "/(.*)",

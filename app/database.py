@@ -124,6 +124,45 @@ def _ensure_publication_scheduled_at(engine):
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE publications ADD COLUMN scheduled_at TIMESTAMP"))
 
+def _ensure_channel_auto_publish(engine):
+    """Tambah kolom auto_publish ke tabel channels yang sudah ada.
+
+    create_all() tidak mengubah tabel lama, jadi tanpa ini kolom baru di
+    models.Channel tidak akan pernah muncul di database production dan
+    toggle auto-publish di dashboard akan gagal (OperationalError).
+    """
+    from sqlalchemy import inspect, text
+    try:
+        cols = {c["name"] for c in inspect(engine).get_columns("channels")}
+    except Exception:
+        return
+    if "auto_publish" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE channels ADD COLUMN auto_publish BOOLEAN DEFAULT FALSE"))
+
+def _ensure_settings_table(engine):
+    """Buat tabel settings bila belum ada (database production lama).
+
+    create_all() sebenarnya membuat tabel baru yang belum ada, jadi
+    pemanggilan ini hanya pengaman: tabel tetap dibuat walau init_db()
+    berjalan dengan metadata yang belum memuat model Setting.
+    """
+    from sqlalchemy import inspect, text
+    try:
+        tables = inspect(engine).get_table_names()
+    except Exception:
+        return
+    if "settings" in tables:
+        return
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE settings ("
+            "key VARCHAR(100) NOT NULL PRIMARY KEY, "
+            "value TEXT NOT NULL DEFAULT '', "
+            "updated_at TIMESTAMP)"
+        ))
+
 def init_db():
     """Panggil eksplisit untuk membuat tabel dan mengikat SessionLocal ke engine."""
     engine = get_engine()
@@ -132,6 +171,8 @@ def init_db():
     _ensure_channel_blog_columns(engine)
     _ensure_feed_sources_table(engine)
     _ensure_publication_scheduled_at(engine)
+    _ensure_settings_table(engine)
+    _ensure_channel_auto_publish(engine)
     return engine
 
 # Untuk keperluan lokal/testing — jalankan langsung tanpa server

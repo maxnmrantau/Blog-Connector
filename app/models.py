@@ -4,6 +4,20 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Bool
 from sqlalchemy.orm import relationship
 from app.database import Base
 
+class Setting(Base):
+    """
+    Pengaturan key/value — dipakai untuk menyimpan kunci API pihak
+    ketiga (mis. gemini_api_key, pexels_api_key) yang dibutuhkan
+    fitur otomatis. Nilai kunci TIDAK PERNAH dikembalikan utuh lewat
+    API (lihat routes_settings) dan tidak ikut di-export backup.
+    """
+    __tablename__ = "settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=False, default="")
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
 class ApiKey(Base):
     """
     Menyimpan API Key untuk AI Agent / integrasi eksternal.
@@ -46,6 +60,11 @@ class Channel(Base):
     tone_of_voice = Column(String(100), nullable=True)
     target_word_count = Column(Integer, default=800)
     default_labels = Column(String(255), nullable=True)
+
+    # Auto-publish terjadwal: bila True, scheduler tick menerbitkan
+    # publikasi berstatus scheduled yang sudah jatuh tempo di channel ini.
+    # Default False — admin mengaktifkannya per channel dari dashboard.
+    auto_publish = Column(Boolean, default=False)
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)

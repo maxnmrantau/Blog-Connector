@@ -45,7 +45,7 @@ def oauth_blogger_page(request: Request):
                     </div>
                     <div>
                         <h1 class="text-xl font-bold text-white">OAuth Generator Blogger</h1>
-                        <p class="text-xs text-slate-400">Dapatkan Refresh Token & Blog ID tanpa buka terminal</p>
+                        <p class="text-xs text-slate-400">Dapatkan Refresh Token (Blogger + Search Console) & Blog ID tanpa buka terminal</p>
                     </div>
                 </div>
                 <a href="/dashboard" class="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 transition">
@@ -60,6 +60,9 @@ def oauth_blogger_page(request: Request):
                 </p>
                 <p class="text-slate-300">
                     Pastikan di <b>Google Cloud > Credentials > OAuth Client ID (Web application)</b> Anda sudah memasukkan URL ini pada bagian <b>Authorized redirect URIs</b>:
+                </p>
+                <p class="text-slate-300">
+                    Aktifkan juga API <b>Google Search Console API</b> di Google Cloud &gt; APIs &amp; Services &gt; Library, supaya dashboard bisa menampilkan data Search Console.
                 </p>
                 <div class="flex items-center gap-2 mt-2">
                     <input type="text" readonly id="redirectUriInput" value="{redirect_uri}" 
@@ -111,7 +114,11 @@ def oauth_blogger_start(request: Request, client_id: str = Form(...), client_sec
         "client_id": client_id.strip(),
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": "https://www.googleapis.com/auth/blogger",
+        # Blogger + Search Console (read-only). Refresh token LAMA yang
+        # dibuat sebelum scope Search Console ditambahkan TIDAK membawa
+        # scope baru — admin harus mengulang alur ini (prompt=consent
+        # sudah aktif) agar token baru membawa kedua scope.
+        "scope": "https://www.googleapis.com/auth/blogger https://www.googleapis.com/auth/webmasters.readonly",
         "access_type": "offline",
         "prompt": "consent",
         "state": state
