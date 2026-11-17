@@ -163,6 +163,69 @@ def _ensure_settings_table(engine):
             "updated_at TIMESTAMP)"
         ))
 
+def _ensure_topic_ideas_table(engine):
+    """Buat tabel topic_ideas bila belum ada (database production lama),
+    atau tambahkan kolom yang kurang bila tabel sudah ada.
+
+    Mengikuti pola _ensure_settings_table / _ensure_feed_sources_table:
+    create_all() tidak mengubah tabel lama, jadi tanpa ini kolom baru
+    tidak akan pernah muncul di database production.
+    """
+    from sqlalchemy import inspect, text
+    try:
+        tables = inspect(engine).get_table_names()
+    except Exception:
+        return
+    if "topic_ideas" not in tables:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "CREATE TABLE topic_ideas ("
+                "id INTEGER NOT NULL PRIMARY KEY, "
+                "channel_id VARCHAR(50) NOT NULL, "
+                "title VARCHAR(300) NOT NULL, "
+                "title_norm VARCHAR(300) NOT NULL, "
+                "keyword VARCHAR(200), "
+                "source VARCHAR(30), "
+                "score INTEGER DEFAULT 50, "
+                "reason TEXT, "
+                "angle TEXT, "
+                "keywords VARCHAR(255), "
+                "source_url VARCHAR(500), "
+                "source_title VARCHAR(300), "
+                "status VARCHAR(20) DEFAULT 'baru', "
+                "publication_id INTEGER, "
+                "created_at TIMESTAMP, "
+                "updated_at TIMESTAMP)"
+            ))
+        return
+    try:
+        cols = {c["name"] for c in inspect(engine).get_columns("topic_ideas")}
+    except Exception:
+        return
+    expected = {
+        "channel_id": "VARCHAR(50)",
+        "title": "VARCHAR(300)",
+        "title_norm": "VARCHAR(300)",
+        "keyword": "VARCHAR(200)",
+        "source": "VARCHAR(30)",
+        "score": "INTEGER",
+        "reason": "TEXT",
+        "angle": "TEXT",
+        "keywords": "VARCHAR(255)",
+        "source_url": "VARCHAR(500)",
+        "source_title": "VARCHAR(300)",
+        "status": "VARCHAR(20)",
+        "publication_id": "INTEGER",
+        "created_at": "TIMESTAMP",
+        "updated_at": "TIMESTAMP",
+    }
+    missing = [(name, ddl) for name, ddl in expected.items() if name not in cols]
+    if not missing:
+        return
+    with engine.begin() as conn:
+        for name, ddl in missing:
+            conn.execute(text(f"ALTER TABLE topic_ideas ADD COLUMN {name} {ddl}"))
+
 def init_db():
     """Panggil eksplisit untuk membuat tabel dan mengikat SessionLocal ke engine."""
     engine = get_engine()
@@ -173,6 +236,7 @@ def init_db():
     _ensure_publication_scheduled_at(engine)
     _ensure_settings_table(engine)
     _ensure_channel_auto_publish(engine)
+    _ensure_topic_ideas_table(engine)
     return engine
 
 # Untuk keperluan lokal/testing — jalankan langsung tanpa server

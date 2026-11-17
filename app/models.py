@@ -81,6 +81,39 @@ class Channel(Base):
         self.credentials_json = json.dumps(creds)
 
 
+class TopicIdea(Base):
+    """
+    Perpustakaan ide topik (Ide Topik v2): ide yang disimpan dari
+    endpoint /ideas (atau dibuat manual) supaya bisa dipakai,
+    dibuang, atau dibuatkan kerangka nanti.
+
+    status: 'baru' (belum diproses), 'dipakai' (sudah jadi draf/artikel),
+    'dibuang' (ditolak admin). Ide berstatus dipakai/dibuang TIDAK
+    muncul lagi sebagai ide baru di GET /ideas. title_norm dipakai
+    dedupe (judul sama, huruf besar/kecil dan spasi diabaikan).
+    """
+    __tablename__ = "topic_ideas"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    channel_id = Column(String(50), ForeignKey("channels.id"), nullable=False)
+    title = Column(String(300), nullable=False)
+    title_norm = Column(String(300), nullable=False, index=True)
+    keyword = Column(String(200), nullable=True)
+    source = Column(String(30), nullable=True)
+    score = Column(Integer, default=50)
+    reason = Column(Text, nullable=True)
+    angle = Column(Text, nullable=True)
+    keywords = Column(String(255), nullable=True)  # dipisah koma
+    source_url = Column(String(500), nullable=True)
+    source_title = Column(String(300), nullable=True)
+    status = Column(String(20), default="baru")
+    publication_id = Column(Integer, ForeignKey("publications.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    channel = relationship("Channel")
+
+
 class ArticleSource(Base):
     """
     Menyimpan riwayat sumber artikel asli yang di-ingest (baik via URL maupun RSS)

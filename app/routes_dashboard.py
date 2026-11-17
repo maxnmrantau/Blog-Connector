@@ -1000,12 +1000,23 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <div>
                             <h2 class="text-lg font-bold text-white">💡 Ide Topik</h2>
-                            <p class="text-xs text-slate-400 mt-1">Usulan judul dari headline feed channel + niche. Bila kunci Gemini terisi di Pengaturan AI, judul dibuat AI; kalau tidak, dipakai mode kata kunci. "Buat Draf" membuat draf kerangka (judul + H2).</p>
+                            <p class="text-xs text-slate-400 mt-1">Usulan judul dari sinyal nyata — tren Google Indonesia, peluang Search Console, headline RSS, celah konten sendiri, atau kata kunci bebas. Bukan dari niche channel. Skor 0–100 + alasan menunjukkan seberapa kuat sinyalnya. "Buat Kerangka" membuat draf outline lengkap; Gemini hanya memperkaya bila kuncinya berfungsi.</p>
                         </div>
                         <div class="flex flex-wrap gap-2">
                             <select id="topicChannelSelect" class="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"></select>
                             <button type="button" onclick="loadTopicIdeas(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Muat Ide</button>
                         </div>
+                    </div>
+                    <div class="flex flex-wrap gap-2 mb-3" id="topicSourcePills">
+                        <button type="button" data-source="all" onclick="setTopicSource('all', this)" class="topic-pill bg-emerald-500 text-slate-950 font-bold px-3 py-1.5 rounded-xl text-xs transition">Semua</button>
+                        <button type="button" data-source="trends" onclick="setTopicSource('trends', this)" class="topic-pill bg-slate-800 text-slate-300 hover:bg-slate-700 px-3 py-1.5 rounded-xl text-xs transition">🔥 Tren</button>
+                        <button type="button" data-source="search_console" onclick="setTopicSource('search_console', this)" class="topic-pill bg-slate-800 text-slate-300 hover:bg-slate-700 px-3 py-1.5 rounded-xl text-xs transition">🔍 Search Console</button>
+                        <button type="button" data-source="feeds" onclick="setTopicSource('feeds', this)" class="topic-pill bg-slate-800 text-slate-300 hover:bg-slate-700 px-3 py-1.5 rounded-xl text-xs transition">📰 RSS</button>
+                        <button type="button" data-source="gaps" onclick="setTopicSource('gaps', this)" class="topic-pill bg-slate-800 text-slate-300 hover:bg-slate-700 px-3 py-1.5 rounded-xl text-xs transition">🎯 Celah Blog</button>
+                    </div>
+                    <div class="flex flex-wrap gap-2 mb-4">
+                        <input type="text" id="topicSeed" placeholder="Kata kunci bebas — misal: menggambar digital" class="flex-1 min-w-[220px] bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        <button type="button" onclick="loadTopicSeedIdeas(this)" class="bg-slate-700 hover:bg-slate-600 text-white font-bold px-4 py-2 rounded-xl text-xs transition">Cari Ide dari Kata Kunci</button>
                     </div>
                     <div id="topicIdeas" class="text-sm text-slate-400">Pilih blog lalu klik "Muat Ide".</div>
                 </div>
@@ -2483,8 +2494,9 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 }}
             }}
 
-            // --- Ide Topik ---
+            // --- Ide Topik v2 ---
             let topicIdeas = [];
+            let topicSource = 'all';
             async function loadTopicChannels() {{
                 const sel = document.getElementById('topicChannelSelect');
                 if (sel.options.length) return;
@@ -2496,25 +2508,140 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 }} catch (err) {{}}
             }}
 
-            async function loadTopicIdeas(btn) {{
+            function setTopicSource(source, btn) {{
+                topicSource = source;
+                const pills = document.querySelectorAll('#topicSourcePills .topic-pill');
+                pills.forEach(function(p) {{
+                    if (p.dataset.source === source) {{
+                        p.className = 'topic-pill bg-emerald-500 text-slate-950 font-bold px-3 py-1.5 rounded-xl text-xs transition';
+                    }} else {{
+                        p.className = 'topic-pill bg-slate-800 text-slate-300 hover:bg-slate-700 px-3 py-1.5 rounded-xl text-xs transition';
+                    }}
+                }});
+                loadTopicIdeas(null);
+            }}
+
+            function loadTopicSeedIdeas(btn) {{
+                const seed = document.getElementById('topicSeed').value.trim();
+                if (!seed) {{ showToast('Isi kata kunci bebas dulu.', 'error'); return; }}
+                loadTopicIdeas(btn, 'seed', seed);
+            }}
+
+            function topicScoreBadge(score) {{
+                const s = score || 0;
+                if (s >= 70) return '<span class="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-lg px-2 py-0.5 text-[11px] font-bold whitespace-nowrap">Skor ' + s + '</span>';
+                if (s >= 55) return '<span class="bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-lg px-2 py-0.5 text-[11px] font-bold whitespace-nowrap">Skor ' + s + '</span>';
+                return '<span class="bg-slate-700/60 text-slate-300 border border-slate-600 rounded-lg px-2 py-0.5 text-[11px] font-bold whitespace-nowrap">Skor ' + s + '</span>';
+            }}
+
+            function topicSourceLabel(source) {{
+                if (source === 'trends') return '🔥 Tren';
+                if (source === 'search_console') return '🔍 Search Console';
+                if (source === 'feeds') return '📰 RSS';
+                if (source === 'gaps') return '🎯 Celah Blog';
+                if (source === 'seed') return '🔑 Kata Kunci';
+                return '💡 Ide';
+            }}
+
+            async function loadTopicIdeas(btn, sourceOverride, seedOverride) {{
                 const box = document.getElementById('topicIdeas');
                 const channelId = document.getElementById('topicChannelSelect').value;
                 if (!channelId) {{ showToast('Pilih blog dulu.', 'error'); return; }}
+                const source = sourceOverride || topicSource || 'all';
+                const seed = seedOverride || '';
                 if (btn) setBtnLoading(btn, true, 'Memuat…');
                 try {{
-                    const res = await fetch('/api/v1/topics/ideas?channel_id=' + encodeURIComponent(channelId));
+                    let url = '/api/v1/topics/ideas?channel_id=' + encodeURIComponent(channelId) + '&source=' + encodeURIComponent(source);
+                    if (seed) url += '&seed=' + encodeURIComponent(seed);
+                    const res = await fetch(url);
                     const data = await res.json();
                     if (!res.ok) {{ box.innerHTML = '<div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-xs text-amber-200">' + escapeHtml(data.detail || 'Terjadi kesalahan') + '</div>'; return; }}
                     topicIdeas = data.ideas || [];
-                    let html = '<p class="text-xs text-slate-400 mb-3">' + (data.ai_used ? '🤖 Judul dibuat Gemini AI' : '🔑 Judul berbasis kata kunci (tanpa AI)') + ' · ' + (data.headline_count || 0) + ' headline dipakai · niche: ' + escapeHtml(data.niche || '') + '</p>';
-                    if (data.ai_error) html += '<p class="text-[11px] text-amber-400 mb-3">AI gagal (' + escapeHtml(data.ai_error) + ') — dipakai fallback kata kunci.</p>';
-                    if (!topicIdeas.length) {{ box.innerHTML = html + '<p class="text-xs text-slate-500">Belum ada ide — tambahkan feed RSS di seksi Ingest dulu.</p>'; return; }}
-                    html += topicIdeas.map((idea, i) => '<div class="bg-slate-800 rounded-xl p-3 mb-2"><div class="flex flex-wrap items-start justify-between gap-2"><div class="flex-1 min-w-[200px]"><p class="text-sm font-semibold text-slate-100">' + escapeHtml(idea.title || '') + '</p><p class="text-xs text-slate-400 mt-1">' + escapeHtml(idea.angle || '') + '</p><p class="text-[11px] text-slate-500 mt-1">' + (idea.keywords || []).map((k) => '#' + escapeHtml(k)).join(' ') + (idea.source_title ? ' · sumber: ' + escapeHtml(idea.source_title) : '') + '</p></div><button type="button" onclick="createTopicDraft(' + i + ', this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-3 py-1.5 rounded-xl text-xs transition whitespace-nowrap">✏️ Buat Draf</button></div></div>').join('');
+                    let html = '';
+                    const sources = data.sources || {{}};
+                    const sourceNames = {{trends: 'Tren', search_console: 'Search Console', feeds: 'RSS', gaps: 'Celah Blog', seed: 'Kata Kunci'}};
+                    Object.keys(sources).forEach(function(key) {{
+                        const st = sources[key];
+                        if (st && st.available === false && st.message) {{
+                            html += '<p class="text-[11px] text-amber-400 mb-2">' + escapeHtml(sourceNames[key] || key) + ': ' + escapeHtml(st.message) + '</p>';
+                        }}
+                    }});
+                    if (!topicIdeas.length) {{ box.innerHTML = html + '<p class="text-xs text-slate-500">Belum ada ide dari sumber ini. Coba sumber lain, tambah RSS di seksi Ingest, atau isi kata kunci bebas.</p>'; return; }}
+                    html += topicIdeas.map(function(idea, i) {{
+                        let card = '<div class="bg-slate-800 rounded-xl p-3 mb-2"><div class="flex flex-wrap items-start justify-between gap-2"><div class="flex-1 min-w-[200px]">';
+                        card += '<div class="flex flex-wrap items-center gap-2"><p class="text-sm font-semibold text-slate-100">' + escapeHtml(idea.title || '') + '</p>' + topicScoreBadge(idea.score) + '</div>';
+                        card += '<p class="text-xs text-slate-400 mt-1">' + escapeHtml(idea.reason || idea.angle || '') + '</p>';
+                        card += '<p class="text-[11px] text-slate-500 mt-1">' + escapeHtml(topicSourceLabel(idea.source)) + (idea.keyword ? ' · kata kunci: ' + escapeHtml(idea.keyword) : '') + (idea.keywords || []).map(function(k) {{ return ' #' + escapeHtml(k); }}).join('') + (idea.source_title ? ' · sumber: ' + escapeHtml(idea.source_title) : '') + (idea.library_status === 'baru' ? ' · <span class="text-emerald-400">Tersimpan di perpustakaan</span>' : '') + '</p>';
+                        card += '</div><div class="flex flex-col gap-1.5">';
+                        card += '<button type="button" onclick="createTopicOutline(' + i + ', this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-3 py-1.5 rounded-xl text-xs transition whitespace-nowrap">📝 Buat Kerangka</button>';
+                        card += '<button type="button" onclick="createTopicDraft(' + i + ', this)" class="bg-slate-700 hover:bg-slate-600 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition whitespace-nowrap">✏️ Buat Draf</button>';
+                        card += '<button type="button" onclick="discardTopicIdea(' + i + ', this)" class="bg-slate-800 hover:bg-red-900/60 text-slate-300 hover:text-red-200 px-3 py-1.5 rounded-xl text-xs transition whitespace-nowrap">🗑️ Buang</button>';
+                        card += '</div></div></div>';
+                        return card;
+                    }}).join('');
                     box.innerHTML = html;
                 }} catch (err) {{
                     box.innerText = 'Error: ' + err;
                 }} finally {{
                     if (btn) setBtnLoading(btn, false);
+                }}
+            }}
+
+            async function saveTopicIdeaToLibrary(idea) {{
+                const channelId = document.getElementById('topicChannelSelect').value;
+                const res = await fetch('/api/v1/topics/library', {{method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{channel_id: channelId, title: idea.title, keyword: idea.keyword, source: idea.source, score: idea.score, reason: idea.reason, angle: idea.angle, keywords: idea.keywords, source_url: idea.source_url, source_title: idea.source_title}})}});
+                const data = await res.json();
+                if (!res.ok) {{ throw new Error(data.detail || 'Gagal menyimpan ide'); }}
+                return data;
+            }}
+
+            async function createTopicOutline(index, btn) {{
+                const idea = topicIdeas[index];
+                if (!idea) return;
+                setBtnLoading(btn, true, 'Membuat…');
+                try {{
+                    let libraryId = idea.library_id;
+                    if (!libraryId) {{
+                        const saved = await saveTopicIdeaToLibrary(idea);
+                        libraryId = saved.id;
+                        idea.library_id = libraryId;
+                        idea.library_status = 'baru';
+                    }}
+                    const res = await fetch('/api/v1/topics/ideas/' + libraryId + '/outline', {{method: 'POST'}});
+                    const data = await res.json();
+                    if (!res.ok) {{ showToast('Gagal membuat kerangka: ' + (data.detail || 'Terjadi kesalahan'), 'error'); return; }}
+                    idea.library_status = 'dipakai';
+                    let msg = 'Draf kerangka dibuat: ' + (data.title || '') + ' (id ' + data.publication_id + '). Lengkapi di seksi Artikel.';
+                    if (data.ai_used) {{ msg += ' (Judul/kerangka diperkaya Gemini AI.)'; }}
+                    else if (data.ai_error) {{ msg += ' (AI tidak dipakai: ' + data.ai_error + ')'; }}
+                    showToast(msg);
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
+                }}
+            }}
+
+            async function discardTopicIdea(index, btn) {{
+                const idea = topicIdeas[index];
+                if (!idea) return;
+                setBtnLoading(btn, true, 'Membuang…');
+                try {{
+                    let libraryId = idea.library_id;
+                    if (!libraryId) {{
+                        const saved = await saveTopicIdeaToLibrary(idea);
+                        libraryId = saved.id;
+                    }}
+                    const res = await fetch('/api/v1/topics/library/' + libraryId, {{method: 'PATCH', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{status: 'dibuang'}})}});
+                    const data = await res.json();
+                    if (!res.ok) {{ showToast('Gagal membuang ide: ' + (data.detail || 'Terjadi kesalahan'), 'error'); return; }}
+                    topicIdeas.splice(index, 1);
+                    loadTopicIdeas(null);
+                    showToast('Ide dibuang (tidak akan muncul lagi).');
+                }} catch (err) {{
+                    showToast('Error: ' + err, 'error');
+                }} finally {{
+                    setBtnLoading(btn, false);
                 }}
             }}
 
