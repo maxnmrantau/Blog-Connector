@@ -1,0 +1,27 @@
+name: Scheduler Tick (Auto-Publish)
+
+# Pemicu tick auto-publish tiap jam lewat GitHub Actions (gratis).
+# Alasan: Vercel paket Hobby hanya mengizinkan cron HARIAN, jadi cron
+# Vercel di vercel.json hanya jalan sekali sehari (08:00 WIB) sebagai
+# pengaman. Tick tiap jam yang sebenarnya dilakukan workflow ini.
+# Syarat: tambah repository secret BLOG_CONNECTOR_API_KEY di
+# GitHub repo Settings -> Secrets and variables -> Actions, isinya
+# API key Blog Connector (dikirim sebagai header x-api-key).
+# Tanpa secret ini workflow gagal dengan 401 dan tidak melakukan apa-apa.
+# Catatan: GitHub bisa menunda jadwal beberapa menit, dan scheduled
+# workflow nonaktif bila repo tidak ada aktivitas selama 60 hari.
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Panggil tick auto-publish
+        run: |
+          curl --fail --silent --show-error -X POST \
+            "https://blog-connector-six.vercel.app/api/v1/scheduler/tick" \
+            -H "x-api-key: ${{ secrets.BLOG_CONNECTOR_API_KEY }}"

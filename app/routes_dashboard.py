@@ -960,7 +960,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <div>
                             <h2 class="text-lg font-bold text-white">⏰ Penjadwal — Auto-Publish</h2>
-                            <p class="text-xs text-slate-400 mt-1">Artikel terjadwal di Blogger sudah diterbitkan otomatis oleh Blogger pada waktunya (publishDate). Tick di sini menyinkronkan statusnya dan menerbitkan yang terlewat — hanya untuk channel yang toggle-nya aktif. Cron Vercel menjalankan tick tiap jam.</p>
+                            <p class="text-xs text-slate-400 mt-1">Artikel terjadwal di Blogger sudah diterbitkan otomatis oleh Blogger pada waktunya (publishDate). Tick di sini menyinkronkan statusnya dan menerbitkan yang terlewat — hanya untuk channel yang toggle-nya aktif. Tick tiap jam dijalankan GitHub Actions; Cron Vercel jalan sekali sehari (08:00 WIB) sebagai pengaman, karena paket Hobby hanya mengizinkan cron harian.</p>
                         </div>
                         <button type="button" onclick="runTickNow(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">▶ Jalankan Tick Sekarang</button>
                     </div>
@@ -2376,7 +2376,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     html += '<div class="bg-slate-800 rounded-xl p-3"><div class="text-[11px] uppercase tracking-wider text-slate-400">Jatuh tempo</div><div class="font-bold text-white">' + (data.due_count || 0) + '</div></div>';
                     html += '<div class="bg-slate-800 rounded-xl p-3"><div class="text-[11px] uppercase tracking-wider text-slate-400">Terbit tick lalu</div><div class="font-bold text-white">' + (last ? ((last.published || 0) + (last.already_live || 0)) : '-') + '</div></div>';
                     html += '<div class="bg-slate-800 rounded-xl p-3"><div class="text-[11px] uppercase tracking-wider text-slate-400">Gagal tick lalu</div><div class="font-bold text-white">' + (last ? (last.failed || 0) : '-') + '</div></div></div>';
-                    if (!data.cron_configured) html += '<p class="mt-3 text-amber-400 text-xs">⚠️ CRON_SECRET belum diatur di Vercel — cron otomatis tiap jam tidak akan berjalan. Tick manual dari tombol di atas tetap bisa dipakai.</p>';
+                    if (!data.cron_configured) html += '<p class="mt-3 text-amber-400 text-xs">⚠️ CRON_SECRET belum diatur di Vercel — cron harian Vercel tidak akan berjalan. Tick tiap jam lewat GitHub Actions dan tick manual dari tombol di atas tetap bisa dipakai.</p>';
                     statusBox.innerHTML = html;
                     if (data.due && data.due.length) {{
                         dueBox.innerHTML = '<h4 class="text-sm font-bold text-white mb-2">Antrean jatuh tempo</h4>' + data.due.map((d) => '<div class="flex flex-wrap items-center justify-between gap-2 bg-slate-800 rounded-xl px-3 py-2 mb-2 text-xs"><span class="text-slate-200">' + escapeHtml(d.title || '') + '</span><span class="text-slate-400">' + escapeHtml(d.scheduled_at ? d.scheduled_at.replace('T', ' ').slice(0, 16) : '') + ' · ' + (d.auto_publish ? 'auto-publish aktif' : 'auto-publish mati') + '</span></div>').join('');
