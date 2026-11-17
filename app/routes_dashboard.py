@@ -1,6 +1,7 @@
 import datetime
 from html import escape as html_escape
 import os
+import urllib.parse
 from fastapi import APIRouter, Request, Form, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
@@ -181,6 +182,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
         )
         test_btn = f"""
         {settings_btn}
+        <a href="/oauth/blogger?channel_id={urllib.parse.quote(ch.id, safe='')}" class="text-xs bg-slate-800 hover:bg-slate-700 text-emerald-400 px-2 py-1 rounded border border-slate-700 transition inline-block">🔗 Hubungkan Ulang</a>
         <button onclick="testChannel('{ch.id}', this)" class="text-xs bg-slate-800 hover:bg-slate-700 text-emerald-400 px-2 py-1 rounded border border-slate-700 transition">Test</button>
         <button onclick="deleteChannel('{ch.id}', this)" class="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 px-2 py-1 rounded border border-red-500/30 transition ml-1">Hapus</button>
         """ if ch.platform == 'blogger' else f"""
@@ -980,11 +982,12 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <div>
                             <h2 class="text-lg font-bold text-white">🔍 Search Console</h2>
-                            <p class="text-xs text-slate-400 mt-1">Kueri teratas (28 hari terakhir) + sitemap dari Google Search Console. Butuh OAuth dengan scope Search Console — bila belum, hubungkan ulang.</p>
+                            <p class="text-xs text-slate-400 mt-1">Kueri teratas (28 hari terakhir) + sitemap dari Google Search Console. Butuh OAuth dengan scope Search Console — bila belum, hubungkan ulang (sekali klik, token baru tersimpan otomatis ke channel).</p>
                         </div>
                         <div class="flex flex-wrap gap-2">
                             <select id="scChannelSelect" class="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"></select>
                             <button type="button" onclick="loadSearchConsole(this)" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-emerald-500/20">Muat Data</button>
+                            <button type="button" onclick="reconnectScChannel()" title="Hubungkan ulang OAuth untuk blog yang dipilih — token baru tersimpan otomatis" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 font-bold px-4 py-2 rounded-xl text-xs transition">🔗 Hubungkan Ulang</button>
                         </div>
                     </div>
                     <div id="scContent" class="text-sm text-slate-400">Pilih blog lalu klik "Muat Data".</div>
@@ -2422,6 +2425,12 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
             }}
 
             // --- Search Console ---
+            function reconnectScChannel() {{
+                const channelId = document.getElementById('scChannelSelect').value;
+                if (!channelId) {{ showToast('Pilih blog dulu.', 'error'); return; }}
+                window.location.href = '/oauth/blogger?channel_id=' + encodeURIComponent(channelId);
+            }}
+
             async function loadScChannels() {{
                 const sel = document.getElementById('scChannelSelect');
                 if (sel.options.length) return;
@@ -2443,7 +2452,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                     const data = await res.json();
                     if (!res.ok) {{
                         let html = '<div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-xs text-amber-200">' + escapeHtml(data.detail || 'Terjadi kesalahan') + '</div>';
-                        if (res.status === 403) html += '<div class="mt-3"><a href="/oauth/blogger" class="inline-block bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition">🔗 Hubungkan Ulang OAuth</a><p class="text-[11px] text-slate-500 mt-2">Di halaman OAuth, login dengan akun Google yang sama lalu salin refresh token baru ke form channel. Pastikan juga API Google Search Console sudah diaktifkan di Google Cloud.</p></div>';
+                        if (res.status === 403 || res.status === 401) html += '<div class="mt-3"><a href="/oauth/blogger?channel_id=' + encodeURIComponent(channelId) + '" class="inline-block bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition">🔗 Hubungkan Ulang OAuth</a><p class="text-[11px] text-slate-500 mt-2">Di halaman OAuth, login dengan akun Google yang sama — token baru tersimpan otomatis ke channel ini, tidak perlu disalin ke form. Pastikan juga API Google Search Console sudah diaktifkan di Google Cloud.</p></div>';
                         box.innerHTML = html;
                         return;
                     }}

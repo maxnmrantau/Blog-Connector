@@ -1,9 +1,13 @@
+from html import escape as html_escape
 import os
 import urllib.parse
 import httpx
-from fastapi import APIRouter, Request, Form
+from fastapi import APIRouter, Depends, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy.orm import Session
 
+from app.database import get_db
+from app.models import Channel
 from app.security import serializer, is_session_valid, COOKIE_NAME
 
 router = APIRouter(include_in_schema=False)
@@ -14,12 +18,60 @@ def get_redirect_uri(request: Request) -> str:
     return f"{scheme}://{host}/oauth/blogger/callback"
 
 @router.get("/oauth/blogger", response_class=HTMLResponse)
-def oauth_blogger_page(request: Request):
+def oauth_blogger_page(request: Request, channel_id: str = None, db: Session = Depends(get_db)):
     token = request.cookies.get(COOKIE_NAME)
     if not is_session_valid(token):
         return RedirectResponse(url="/login", status_code=303)
 
     redirect_uri = get_redirect_uri(request)
+
+    # Hubung ulang sekali klik: bila channel_id diberikan dan channel
+    # ditemukan, Client ID/Secret diambil dari kredensial channel yang
+    # tersimpan — admin tinggal klik tombol login Google, tanpa mengetik
+    # apa pun. Tanpa channel_id, form manual lama tetap jalan.
+    channel = None
+    if channel_id:
+        channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    creds = channel.get_credentials() if channel else {}
+    stored_client_id = (creds.get("client_id") or "").strip()
+    stored_client_secret = (creds.get("client_secret") or "").strip()
+    prefilled = bool(channel and stored_client_id and stored_client_secret)
+
+    if prefilled:
+        prefill_note = f"""
+            <div class="mb-6 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs space-y-1">
+                <p class="font-semibold text-emerald-400">🔗 Menghubungkan ulang channel: {html_escape(channel.name, quote=True)}</p>
+                <p class="text-slate-300">Client ID &amp; Secret diambil dari channel yang tersimpan — tinggal klik tombol di bawah, login dengan akun Google yang sama, dan token baru tersimpan otomatis ke channel ini.</p>
+            </div>
+        """
+        form_fields = f"""
+                <input type="hidden" name="client_id" value="{html_escape(stored_client_id, quote=True)}">
+                <input type="hidden" name="client_secret" value="{html_escape(stored_client_secret, quote=True)}">
+                <input type="hidden" name="channel_id" value="{html_escape(channel.id, quote=True)}">
+        """
+    else:
+        if channel_id:
+            prefill_note = """
+            <div class="mb-6 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-1">
+                <p class="font-semibold text-amber-400">⚠️ Channel tidak ditemukan</p>
+                <p class="text-slate-300">Isi Client ID &amp; Secret secara manual di bawah ini.</p>
+            </div>
+            """
+        else:
+            prefill_note = ""
+        form_fields = """
+                <div>
+                    <label class="block font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Google Client ID</label>
+                    <input type="text" name="client_id" required placeholder="Contoh: 123456789-xxx.apps.googleusercontent.com"
+                        class="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+
+                <div>
+                    <label class="block font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Google Client Secret</label>
+                    <input type="password" name="client_secret" required placeholder="Contoh: GOCSPX-xxxxxxxxx"
+                        class="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+        """
 
     html = f"""
     <!DOCTYPE html>
@@ -74,18 +126,9 @@ def oauth_blogger_page(request: Request):
                 </div>
             </div>
 
+            {prefill_note}
             <form action="/oauth/blogger/start" method="POST" class="space-y-4 text-xs">
-                <div>
-                    <label class="block font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Google Client ID</label>
-                    <input type="text" name="client_id" required placeholder="Contoh: 123456789-xxx.apps.googleusercontent.com"
-                        class="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
-                </div>
-
-                <div>
-                    <label class="block font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Google Client Secret</label>
-                    <input type="password" name="client_secret" required placeholder="Contoh: GOCSPX-xxxxxxxxx"
-                        class="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500">
-                </div>
+                {form_fields}
 
                 <div class="pt-3">
                     <button type="submit"
@@ -102,13 +145,18 @@ def oauth_blogger_page(request: Request):
     return HTMLResponse(content=html)
 
 @router.post("/oauth/blogger/start")
-def oauth_blogger_start(request: Request, client_id: str = Form(...), client_secret: str = Form(...)):
+def oauth_blogger_start(request: Request, client_id: str = Form(...), client_secret: str = Form(...), channel_id: str = Form(None)):
     token = request.cookies.get(COOKIE_NAME)
     if not is_session_valid(token):
         return RedirectResponse(url="/login", status_code=303)
 
     redirect_uri = get_redirect_uri(request)
-    state = serializer.dumps({"client_id": client_id.strip(), "client_secret": client_secret.strip()})
+    state_data = {"client_id": client_id.strip(), "client_secret": client_secret.strip()}
+    if channel_id:
+        # Dibawa lewat state yang ditandatangani agar callback tahu
+        # token baru ini harus disimpan otomatis ke channel mana.
+        state_data["channel_id"] = channel_id.strip()
+    state = serializer.dumps(state_data)
 
     params = {
         "client_id": client_id.strip(),
@@ -127,7 +175,7 @@ def oauth_blogger_start(request: Request, client_id: str = Form(...), client_sec
     return RedirectResponse(url=google_auth_url, status_code=303)
 
 @router.get("/oauth/blogger/callback", response_class=HTMLResponse)
-async def oauth_blogger_callback(request: Request, code: str = None, state: str = None, error: str = None):
+async def oauth_blogger_callback(request: Request, code: str = None, state: str = None, error: str = None, db: Session = Depends(get_db)):
     if error or not code or not state:
         err_msg = error or "Otorisasi dibatalkan atau kode otorisasi tidak ditemukan."
         return HTMLResponse(content=f"""
@@ -177,6 +225,26 @@ async def oauth_blogger_callback(request: Request, code: str = None, state: str 
         </body>
         """)
 
+    # Hubung ulang sekali klik: bila state membawa channel_id, simpan
+    # refresh token baru OTOMATIS ke channel itu (gabung dengan
+    # kredensial lama agar blog_id/dll tidak hilang). Admin tidak perlu
+    # menyalin token ke form mana pun. Bila channel tidak ditemukan,
+    # jatuh kembali ke perilaku lama (token hanya ditampilkan).
+    saved_channel_name = None
+    channel_id = data.get("channel_id")
+    if channel_id:
+        channel = db.query(Channel).filter(Channel.id == channel_id).first()
+        if channel:
+            creds = channel.get_credentials()
+            creds.update({
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token,
+            })
+            channel.set_credentials(creds)
+            saved_channel_name = channel.name
+            db.commit()
+
     # Ambil daftar blog user via Blogger API
     blogs = []
     if access_token:
@@ -208,6 +276,20 @@ async def oauth_blogger_callback(request: Request, code: str = None, state: str 
     if not blogs_html:
         blogs_html = "<p class='text-xs text-slate-400'>Tidak ditemukan blog di akun Google ini atau API Blogger belum diaktifkan.</p>"
 
+    if saved_channel_name:
+        saved_banner = f"""
+            <div class="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs space-y-1">
+                <p class="font-semibold text-emerald-400">✅ Token baru tersimpan otomatis ke channel {html_escape(saved_channel_name, quote=True)}</p>
+                <p class="text-slate-300">Search Console sudah bisa dipakai — tidak perlu menyalin token ke form mana pun. Kotak token di bawah hanya info cadangan.</p>
+            </div>
+        """
+        success_subtitle = "Token baru sudah tersimpan otomatis ke channel Anda."
+        back_label = "Kembali ke Dashboard"
+    else:
+        saved_banner = ""
+        success_subtitle = "Salin Refresh Token & Blog ID Anda untuk dimasukkan ke form Tambah Blog"
+        back_label = "Kembali ke Dashboard & Masukkan ke Form"
+
     html = f"""
     <!DOCTYPE html>
     <html lang="id" class="dark">
@@ -224,8 +306,10 @@ async def oauth_blogger_callback(request: Request, code: str = None, state: str 
                     ✓
                 </div>
                 <h1 class="text-xl font-bold text-white">Autentikasi Berhasil!</h1>
-                <p class="text-xs text-slate-400 mt-1">Salin Refresh Token & Blog ID Anda untuk dimasukkan ke form Tambah Blog</p>
+                <p class="text-xs text-slate-400 mt-1">{success_subtitle}</p>
             </div>
+
+            {saved_banner}
 
             <!-- Refresh Token Box -->
             <div class="p-4 bg-slate-800/60 border border-slate-700 rounded-xl space-y-1.5">
@@ -251,7 +335,7 @@ async def oauth_blogger_callback(request: Request, code: str = None, state: str 
             <div class="pt-2">
                 <a href="/dashboard"
                     class="block w-full text-center bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 px-4 rounded-xl border border-slate-700 transition text-sm">
-                    Kembali ke Dashboard & Masukkan ke Form
+                    {back_label}
                 </a>
             </div>
         </div>

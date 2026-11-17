@@ -19,6 +19,7 @@ import datetime
 import json
 
 from google.oauth2.credentials import Credentials
+from google.auth.exceptions import RefreshError
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
@@ -103,6 +104,34 @@ def _http_error_to_sc_error(e):
     )
 
 
+def _refresh_error_to_sc_error(e):
+    """Terjemahkan RefreshError (gagal refresh token OAuth) menjadi
+    SearchConsoleError yang jelas.
+
+    invalid_scope muncul saat token REFRESH, bukan saat panggilan API —
+    jadi error ini TIDAK tertangkap HttpError. Penyebabnya: refresh
+    token dibuat SEBELUM scope Search Console ditambahkan; Google
+    tidak mengizinkan token lama mendapat scope baru, jadi satu-satunya
+    jalan adalah hubungkan ulang OAuth sekali. Status 403 dipakai
+    supaya tombol "Hubungkan Ulang OAuth" di dashboard muncul.
+    """
+    low = str(e).lower()
+    if "invalid_scope" in low:
+        raise SearchConsoleError(
+            "Token OAuth channel ini dibuat sebelum izin Search Console "
+            "ditambahkan. Google tidak mengizinkan token lama mendapat "
+            "izin baru — hubungkan ulang OAuth sekali lewat tombol "
+            "\"Hubungkan Ulang OAuth\" di bawah. Token baru tersimpan "
+            "otomatis ke channel ini.",
+            status_code=403,
+        )
+    raise SearchConsoleError(
+        f"Gagal memperbarui token OAuth ({e}). Hubungkan ulang OAuth "
+        "lewat tombol \"Hubungkan Ulang OAuth\" di bawah.",
+        status_code=401,
+    )
+
+
 def _normalize_site_url(url):
     if not url:
         return ""
@@ -149,6 +178,8 @@ def get_overview(channel, service_factory=None):
         sites = service.sites().list().execute()
     except HttpError as e:
         _http_error_to_sc_error(e)
+    except RefreshError as e:
+        _refresh_error_to_sc_error(e)
     except SearchConsoleError:
         raise
     except Exception as e:
@@ -179,6 +210,8 @@ def get_overview(channel, service_factory=None):
         sm = service.sitemaps().list(siteUrl=site_url).execute()
     except HttpError as e:
         _http_error_to_sc_error(e)
+    except RefreshError as e:
+        _refresh_error_to_sc_error(e)
     except SearchConsoleError:
         raise
     except Exception as e:
