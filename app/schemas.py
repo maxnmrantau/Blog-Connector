@@ -101,11 +101,14 @@ class ArticleItem(BaseModel):
 
 class ArticleUpdate(BaseModel):
     """Partial update sebuah publikasi (judul dan/atau konten baru).
-    Minimal salah satu dari title / content_html harus diisi."""
+    Minimal salah satu dari title / content_html / labels harus diisi.
+    labels yang tidak diisi akan dipertahankan dari label yang sudah
+    tersimpan (lihat update_publication), bukan dihapus."""
     title: Optional[str] = None
     content_html: Optional[str] = None
     cover_image_url: Optional[str] = None
     cover_image_alt: Optional[str] = None
+    labels: Optional[List[str]] = None
 
 class PublishRequest(BaseModel):
     source_id: Optional[int] = None

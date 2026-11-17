@@ -43,11 +43,18 @@ class BaseBlogPlatform(ABC):
         self,
         post_id: str,
         title: str,
-        content_html: str
+        content_html: str,
+        labels: Optional[List[str]] = None
     ) -> PublishResult:
         """
         Memperbarui judul dan/atau konten sebuah postingan yang sudah
         ada di platform target (draf maupun yang sudah published).
+
+        labels: bila diisi, label postingan ikut diperbarui. Bila None,
+        platform tidak menerima label sama sekali — pemanggil yang
+        peduli label harus mengirimkan label yang sudah tersimpan,
+        karena posts().update() di Blogger mengganti seluruh isi
+        postingan dan label yang tidak dikirim akan hilang.
         """
         pass
 

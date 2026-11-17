@@ -522,9 +522,15 @@ def update_publication(
     Mengedit artikel yang sudah ada (draf maupun published): perbarui
     judul dan/atau konten di Blogger lewat posts().update() lalu
     sinkronkan rekaman di database. Status publikasi (draft/published)
-    tidak berubah. Minimal salah satu dari title / content_html harus
-    diisi; kalau ada cover_image_url, gambar sampul disisipkan di awal
-    konten (menggantikan gambar sampul lama bila ada).
+    tidak berubah. Minimal salah satu dari title / content_html /
+    labels harus diisi; kalau ada cover_image_url, gambar sampul
+    disisipkan di awal konten (menggantikan gambar sampul lama bila ada).
+
+    Label: posts().update() mengganti seluruh postingan, jadi label
+    yang tidak dikirim akan terhapus di Blogger. Karena itu, bila
+    payload tidak membawa labels, endpoint ini memakai label yang
+    sudah tersimpan di database (pub.labels) supaya edit dari
+    dashboard atau API lama tidak menghilangkan label.
     """
     pub = db.query(Publication).filter(Publication.id == publication_id).first()
     if not pub:
@@ -533,10 +539,10 @@ def update_publication(
             detail=f"Publikasi dengan id {publication_id} tidak ditemukan."
         )
 
-    if not payload.title and not payload.content_html:
+    if not payload.title and not payload.content_html and payload.labels is None:
         raise HTTPException(
             status_code=400,
-            detail="Isi minimal judul baru atau konten_html baru."
+            detail="Isi minimal judul baru, konten_html baru, atau labels baru."
         )
 
     channel = pub.channel
@@ -550,12 +556,21 @@ def update_publication(
             new_content, payload.cover_image_url, payload.cover_image_alt
         )
 
+    # Label efektif: yang dikirim klien, atau yang sudah tersimpan.
+    if payload.labels is not None:
+        effective_labels = payload.labels
+    elif pub.labels:
+        effective_labels = [l.strip() for l in pub.labels.split(",") if l.strip()]
+    else:
+        effective_labels = None
+
     if pub.remote_post_id and channel and channel.platform == "blogger":
         driver = BloggerPlatform(channel_id=channel.id, credentials=channel.get_credentials())
         res = driver.update_post(
             pub.remote_post_id,
             title=new_title,
-            content_html=new_content
+            content_html=new_content,
+            labels=effective_labels
         )
         if not res.success:
             pub.error_message = res.error_message
@@ -575,6 +590,8 @@ def update_publication(
 
     pub.title = new_title
     pub.content_html = new_content
+    if payload.labels is not None:
+        pub.labels = ",".join(payload.labels)
     pub.error_message = None
     db.commit()
 

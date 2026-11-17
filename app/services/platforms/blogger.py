@@ -136,12 +136,18 @@ class BloggerPlatform(BaseBlogPlatform):
         self,
         post_id: str,
         title: str,
-        content_html: str
+        content_html: str,
+        labels: Optional[List[str]] = None
     ) -> PublishResult:
         """
         Memperbarui judul dan konten postingan yang sudah ada di Blogger
         lewat posts().update() — berlaku untuk draf maupun artikel yang
         sudah published, tanpa membuat postingan baru.
+
+        labels yang diberikan ikut dikirim dalam body. Ini penting
+        karena posts().update() mengganti seluruh postingan: label yang
+        tidak disertakan akan terhapus di Blogger (terbukti 2026-11-17:
+        dua artikel kehilangan label setelah diedit lewat PUT).
         """
         blog_id = self.credentials.get("blog_id")
         if not blog_id:
@@ -156,6 +162,8 @@ class BloggerPlatform(BaseBlogPlatform):
                 "title": title,
                 "content": content_html,
             }
+            if labels is not None:
+                body["labels"] = labels
 
             request = service.posts().update(
                 blogId=str(blog_id),
